@@ -1,0 +1,65 @@
+{
+  "title": "Gresil",
+  "children": [
+    {
+      "title": "Gresil",
+      "lines": [
+        "Port of Mutable Instruments",
+        " Beads granular texture",
+        " synthesizer.",
+        "",
+        "Time: where grains start",
+        "Size: grain length.",
+        " Shortest at 33%, long at",
+        " both ends. <33% reverse.",
+        "Delay mode (Setup page):",
+        " knob 2 becomes Filter.",
+        "Shape: grain envelope",
+        "Density: <48% regular,",
+        " 48-52% off, >52% random",
+        "Pitch: -24..+24 st",
+        "Feedback, Reverb, Mix"
+      ]
+    },
+    {
+      "title": "Random",
+      "lines": [
+        "Time/Size/Shape/Pitch Rnd",
+        " randomize each grain.",
+        " +: smooth random spread",
+        " -: random jumps",
+        "In Delay mode knob 2 is",
+        " the Filter: - LP, + HP.",
+        "Freeze: stop recording.",
+        "Media: Dirty Tape (8-bit,",
+        " wow), Clean Tape (12-bit),",
+        " Vintage (12-bit, 32k),",
+        " Digital (16-bit).",
+        "Seed Clock: grains follow",
+        " MIDI clock at Clock Div.",
+        " Density <48% divides it."
+      ]
+    },
+    {
+      "title": "Setup",
+      "lines": [
+        "Mode: Granular or Delay",
+        " (multitap delay, Density",
+        " sets time or clock ratio)",
+        "Source Synth: wavetable",
+        " voice, no input needed.",
+        " Feedback picks the bank,",
+        " Time scans the wave.",
+        "Buffer Mono: 2x longer.",
+        "Drive: input gain. Tape",
+        " media soft-clip it.",
+        "Dry Media: dry path is",
+        " colored like hardware.",
+        "Frz Save: a frozen buffer",
+        " is saved with the set.",
+        "Trim: cut the buffer to",
+        " what was just recorded."
+      ]
+    }
+  ]
+}

@@ -1,0 +1,64 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify version matches tag
+        run: |
+          TAG_VERSION="${GITHUB_REF#refs/tags/v}"
+          JSON_VERSION=$(grep -o '"version": *"[^"]*"' src/module.json | head -1 | grep -o '"[^"]*"$' | tr -d '"')
+          if [ "$TAG_VERSION" != "$JSON_VERSION" ]; then
+            echo "ERROR: Tag version ($TAG_VERSION) does not match module.json version ($JSON_VERSION)"
+            exit 1
+          fi
+          echo "Version verified: $TAG_VERSION"
+
+      - name: Install cross-compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu binutils-aarch64-linux-gnu
+
+      - name: Test (native)
+        run: bash scripts/test.sh
+
+      - name: Build
+        run: |
+          chmod +x scripts/build.sh
+          CROSS_PREFIX=aarch64-linux-gnu- bash scripts/build.sh
+
+      - name: Create tarball
+        run: |
+          cd modules
+          tar -czf ../gresil-module.tar.gz gresil/
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: gresil-module.tar.gz
+          generate_release_notes: true
+
+      - name: Update release.json
+        run: |
+          TAG="${GITHUB_REF#refs/tags/v}"
+          URL="https://github.com/${{ github.repository }}/releases/download/v${TAG}/gresil-module.tar.gz"
+          echo "{" > release.json
+          echo "  \"version\": \"${TAG}\"," >> release.json
+          echo "  \"download_url\": \"${URL}\"" >> release.json
+          echo "}" >> release.json
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add release.json
+          git commit -m "ci: update release.json for v${TAG}"
+          git push origin HEAD:main

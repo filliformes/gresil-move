@@ -1,0 +1,82 @@
+{
+    "id": "gresil",
+    "name": "Gresil",
+    "abbrev": "GRSL",
+    "version": "0.1.0",
+    "description": "Mutable Instruments Beads granular texture synthesizer - granular, delay and wavetable modes for Ableton Move",
+    "author": "Emilie Gillet (DSP) / fillioning (port)",
+    "license": "MIT",
+    "dsp": "gresil.so",
+    "api_version": 2,
+    "component_type": "audio_fx",
+    "capabilities": {
+        "chainable": true,
+        "component_type": "audio_fx",
+        "audio_in": true,
+        "midi_in": true,
+        "chain_params": [
+            {"key": "time",        "name": "Time",       "type": "float", "min": 0,  "max": 1,  "default": 0.2,  "step": 0.01},
+            {"key": "size",        "name": "Size",       "type": "float", "min": 0,  "max": 1,  "default": 0.75,  "step": 0.01},
+            {"key": "shape",       "name": "Shape",      "type": "float", "min": 0,  "max": 1,  "default": 0.5,  "step": 0.01},
+            {"key": "density",     "name": "Density",    "type": "float", "min": 0,  "max": 1,  "default": 0.8,  "step": 0.01},
+            {"key": "pitch",       "name": "Pitch",      "type": "int",   "min": -24, "max": 24, "default": 0,   "step": 1, "unit": "st"},
+            {"key": "feedback",    "name": "Feedback",   "type": "float", "min": 0,  "max": 1,  "default": 0,    "step": 0.01},
+            {"key": "reverb",      "name": "Reverb",     "type": "float", "min": 0,  "max": 1,  "default": 0,    "step": 0.01},
+            {"key": "dry_wet",     "name": "Mix",        "type": "float", "min": 0,  "max": 1,  "default": 0.5,  "step": 0.01},
+            {"key": "time_rnd",    "name": "Time Rnd",   "type": "float", "min": -1, "max": 1,  "default": 0,    "step": 0.01},
+            {"key": "size_rnd",    "name": "Size Rnd",   "type": "float", "min": -1, "max": 1,  "default": 0,    "step": 0.01},
+            {"key": "shape_rnd",   "name": "Shape Rnd",  "type": "float", "min": -1, "max": 1,  "default": 0,    "step": 0.01},
+            {"key": "pitch_rnd",   "name": "Pitch Rnd",  "type": "float", "min": -1, "max": 1,  "default": 0,    "step": 0.01},
+            {"key": "freeze",      "name": "Freeze",     "type": "enum",  "options": ["Off", "On"], "default": 0},
+            {"key": "media",       "name": "Media",      "type": "enum",  "options": ["Dirty Tape", "Clean Tape", "Vintage", "Digital"], "default": 3},
+            {"key": "seed",        "name": "Seed",       "type": "enum",  "options": ["Free", "Clock"], "default": 0},
+            {"key": "clock_div",   "name": "Clock Div",  "type": "enum",  "options": ["1/32", "1/16T", "1/16", "1/8T", "1/8", "1/4T", "1/4", "1/2", "1 Bar"], "default": 4},
+            {"key": "source",      "name": "Source",     "type": "enum",  "options": ["Input", "Synth"], "default": 0},
+            {"key": "buffer",      "name": "Buffer",     "type": "enum",  "options": ["Stereo", "Mono"], "default": 0},
+            {"key": "drive",       "name": "Drive",      "type": "float", "min": 0,  "max": 24, "default": 0,    "step": 0.5, "unit": "dB", "display_format": "%.1f"},
+            {"key": "dry",         "name": "Dry",        "type": "enum",  "options": ["Clean", "Media"], "default": 0},
+            {"key": "mono_grains", "name": "Mono Grain", "type": "enum",  "options": ["Off", "On"], "default": 0},
+            {"key": "freeze_save", "name": "Frz Save",   "type": "enum",  "options": ["Off", "On"], "default": 1},
+            {"key": "mode",        "name": "Mode",       "type": "enum",  "options": ["Granular", "Delay"], "default": 0},
+            {"key": "filter",      "name": "Filter",     "type": "float", "min": -1, "max": 1,  "default": 0,    "step": 0.01},
+            {"key": "trim",        "name": "Trim",       "type": "enum",  "options": ["Off", "On"], "default": 0, "access": "write"}
+        ],
+        "ui_hierarchy": {
+            "modes": null,
+            "levels": {
+                "root": {
+                    "name": "Gresil",
+                    "knobs": ["time", "size", "filter", "shape", "density", "pitch", "feedback", "reverb", "dry_wet"],
+                    "params": [
+                        {"key": "size", "visible_if": {"param": "mode", "equals": "Granular"}},
+                        {"key": "filter", "visible_if": {"param": "mode", "equals": "Delay"}},
+                        {"level": "Beads", "label": "Beads"},
+                        {"level": "Random", "label": "Random"},
+                        {"level": "Setup", "label": "Setup"}
+                    ]
+                },
+                "Beads": {
+                    "label": "Beads",
+                    "knobs": ["time", "size", "filter", "shape", "density", "pitch", "feedback", "reverb", "dry_wet"],
+                    "params": ["time",
+                        {"key": "size", "visible_if": {"param": "mode", "equals": "Granular"}},
+                        {"key": "filter", "visible_if": {"param": "mode", "equals": "Delay"}},
+                        "shape", "density", "pitch", "feedback", "reverb", "dry_wet"]
+                },
+                "Random": {
+                    "label": "Random",
+                    "knobs": ["time_rnd", "size_rnd", "filter", "shape_rnd", "pitch_rnd", "freeze", "media", "seed", "clock_div"],
+                    "params": ["time_rnd",
+                        {"key": "size_rnd", "visible_if": {"param": "mode", "equals": "Granular"}},
+                        {"key": "filter", "visible_if": {"param": "mode", "equals": "Delay"}},
+                        "shape_rnd", "pitch_rnd", "freeze", "media", "seed", "clock_div"]
+                },
+                "Setup": {
+                    "label": "Setup",
+                    "knobs": ["mode", "source", "buffer", "drive", "dry", "mono_grains", "freeze_save", "trim"],
+                    "params": ["mode", "source", "buffer", "drive", "dry", "mono_grains", "freeze_save", "trim"]
+                }
+            }
+        }
+    }
+}
