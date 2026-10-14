@@ -4,7 +4,7 @@
     "abbrev": "GRSL",
     "version": "0.1.1",
     "description": "Mutable Instruments Beads granular texture synthesizer - granular, delay and wavetable modes for Ableton Move",
-    "author": "Emilie Gillet (DSP) / fillioning (port)",
+    "author": "Emilie Gillet (DSP) / filliformes (port)",
     "license": "MIT",
     "dsp": "gresil.so",
     "api_version": 2,

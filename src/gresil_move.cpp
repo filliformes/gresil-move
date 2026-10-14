@@ -1,5 +1,5 @@
 // Gresil — Mutable Instruments Beads as an audio FX for Ableton Move (Schwung)
-// MIT License (Emilie Gillet DSP, fillioning port)
+// MIT License (Emilie Gillet DSP, filliformes port)
 //
 // Wraps beads::Processor (granular + delay engines, 4 media) and beads::Synth
 // (the wavetable voice Beads plays when nothing is patched) into the

@@ -39,7 +39,7 @@ dry signal is untouched); Low Boost and the Limiter act on the whole output.
 ## Credits
 
 - **DSP**: Emilie Gillet / [Mutable Instruments](https://github.com/pichenettes/eurorack) (MIT)
-- **Move port**: fillioning
+- **Move port**: filliformes
 
 ## License
 
