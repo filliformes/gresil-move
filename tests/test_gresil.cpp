@@ -369,6 +369,66 @@ static int max_step(void *inst, Source *src, int blocks, void (*mid)(void *), in
 static void drive_up(void *inst) { set(inst, "drive", "24"); }
 static void media_dirty(void *inst) { set(inst, "media", "Dirty Tape"); }
 
+// Level dip while a control switches: the quietest 3 ms window over the
+// switch, relative to the steady level before it (1.0 = no dip).
+static double level_dip(void *inst, void (*mid)(void *), float amp) {
+    // Output level relative to the same block's input, so the phase of the
+    // test tone inside a 3 ms window does not read as a dip.
+    Source src;
+    int16_t buf[256], in[256];
+    double before = 0, quietest = 1e30;
+    for (int b = 0; b < 200; ++b) {
+        if (b == 100) mid(inst);
+        src.fill(buf, 128, amp);
+        memcpy(in, buf, sizeof(buf));
+        api()->process_block(inst, buf, 128);
+        double eo = 0, ei = 0;
+        for (int i = 0; i < 128; ++i) {
+            eo += (double)buf[2 * i] * buf[2 * i];
+            ei += (double)in[2 * i] * in[2 * i];
+        }
+        double r = ei > 0 ? sqrt(eo / ei) : 0.0;
+        if (b >= 80 && b < 100) before += r / 20.0;
+        if (b >= 100 && b < 140) quietest = std::min(quietest, r);
+    }
+    return before > 0 ? quietest / before : 0.0;
+}
+
+static void media_vintage(void *inst) { set(inst, "media", "Vintage"); }
+static void source_synth(void *inst) { set(inst, "source", "Synth"); }
+
+// Switching Media (or Buffer / Source) clears or swaps the engine. The dry
+// signal must keep playing through it: the old fade-to-silence left a
+// ~15 ms hole that was heard as a click.
+static void test_switches_keep_the_dry() {
+    const char *mixes[] = { "0", "0.5" };
+    for (const char *mx : mixes) {
+        void *inst = api()->create_instance("", NULL);
+        set(inst, "dry_wet", mx);
+        set(inst, "reverb", "0");
+        Source warm;
+        run(inst, &warm, 1.0f);
+        double dip = level_dip(inst, media_dirty, 0.5f);
+        double dip2 = level_dip(inst, media_vintage, 0.5f);
+        printf("  Mix %s: level through a media switch %.0f%% / %.0f%% of before\n",
+               mx, dip * 100.0, dip2 * 100.0);
+        double floor = mx[0] == '0' && mx[1] == 0 ? 0.97 : 0.25;
+        CHECK(dip > floor && dip2 > floor,
+              "Mix %s: media switch dips to %.0f%% / %.0f%% (no hole allowed)", mx, dip * 100, dip2 * 100);
+        api()->destroy_instance(inst);
+    }
+    void *inst = api()->create_instance("", NULL);
+    set(inst, "dry_wet", "0");
+    Source warm;
+    run(inst, &warm, 0.5f);
+    double dip = level_dip(inst, source_synth, 0.5f);
+    // After the switch the output is the wavetable synth, not the input, so
+    // its level differs by design: only a silent hole would be a bug.
+    printf("  Mix 0: level through a source switch %.0f%% of before\n", dip * 100.0);
+    CHECK(dip > 0.2, "Mix 0: source switch leaves a hole (%.0f%%)", dip * 100);
+    api()->destroy_instance(inst);
+}
+
 static void test_click_free_controls() {
     // Mix 0: the output is the (driven) input, a 220 Hz sine at -26 dBFS.
     void *inst = api()->create_instance("", NULL);
@@ -798,6 +858,7 @@ int main() {
     test_default_grain_density();
     test_random_knobs();
     test_click_free_controls();
+    test_switches_keep_the_dry();
     test_audible_after_media_change();
     test_mode_and_filter();
     test_mode_migration();

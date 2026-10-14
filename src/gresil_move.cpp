@@ -362,7 +362,7 @@ struct GresilInstance {
     int applied_media;
     int applied_mono;
     int applied_source;
-    float fade;                     // output gain, ramps around reconfigurations
+    float fade;                     // engine vs dry-bypass crossfade (1 = engine)
     float drive_gain;               // per-sample smoothed input gain
     float soft_amount;              // per-sample smoothed soft-clip blend
 
@@ -700,18 +700,19 @@ static void gresil_process(void *instance, int16_t *audio_inout, int frames) {
 
     DenormalGuard denormal_guard;
 
-    // Media / buffer / source changes wipe or swap the engine: fade the output
-    // out first, reconfigure at silence, then fade back in.
+    // Media / buffer / source changes wipe or swap the engine. Crossfade from
+    // the engine to a plain dry bypass, reconfigure while only the bypass is
+    // heard, then crossfade back: the dry keeps playing straight through the
+    // switch (fading the whole output to silence left an audible hole).
     // Never while a freeze restore is filling the delay banks: Configure()
     // would clear them under the worker's feet. The change waits for the load.
     bool reconfigure = configuration_pending(inst) && !inst->loading;
-    if (reconfigure && inst->fade <= 0.0f) {
-        // Clearing the 768 KB buffer is the heaviest thing Gresil ever does
-        // on the callback: give it the block to itself. The output is already
-        // faded to silence, so this block stays silent.
+    const bool configure_now = reconfigure && inst->fade <= 0.0f;
+    if (configure_now) {
+        // Clearing the 768 KB buffer is the heaviest thing Gresil ever does on
+        // the callback, so the engine sits this block out; the bypass plays.
         apply_configuration(inst);
-        memset(audio_inout, 0, (size_t)frames * 2 * sizeof(int16_t));
-        return;
+        reconfigure = false;
     }
 
     if (inst->pending_load && !reconfigure) {
@@ -791,7 +792,10 @@ static void gresil_process(void *instance, int16_t *audio_inout, int frames) {
     const bool frozen = ival(inst, P_FREEZE) != 0;
     for (int i = 0; i < kSubBlock; ++i) freeze[i] = frozen;
 
-    for (int offset = 0; offset < frames; offset += kSubBlock) {
+    if (configure_now) {
+        memset(out, 0, sizeof(FloatFrame) * (size_t)frames);
+    }
+    for (int offset = 0; !configure_now && offset < frames; offset += kSubBlock) {
         int n = frames - offset < kSubBlock ? frames - offset : kSubBlock;
         n &= ~1;  // the 2x decimating media need even block sizes
         if (n <= 0) {
@@ -827,6 +831,23 @@ static void gresil_process(void *instance, int16_t *audio_inout, int frames) {
         }
     }
 
+    // Engine <-> dry bypass crossfade (see the reconfigure note above). The
+    // bypass is the input at the dry level of the current Mix (Beads' law,
+    // clean-dry gain), so at Mix 0 a switch is inaudible.
+    {
+        const float m = clampf(inst->smooth[P_MIX] * 1.005f, 0.0f, 1.0f);
+        const float dry_gain = (1.0f - m) * (1.0f + m) *
+            (ival(inst, P_DRY) == 0 ? 1.0f : 0.75f);
+        const float fade_step = (reconfigure || configure_now ? -1.0f : 1.0f) /
+            (kFadeTime * kSampleRate);
+        for (int i = 0; i < frames; ++i) {
+            const float g = inst->fade;
+            inst->fade = clampf(g + fade_step, 0.0f, 1.0f);
+            out[i].l = out[i].l * g + in[i].l * dry_gain * (1.0f - g);
+            out[i].r = out[i].r * g + in[i].r * dry_gain * (1.0f - g);
+        }
+    }
+
     // Output stage. Both run all the time (no bypass branch to click on):
     // the shelf is unity at 0 dB, the limiter crossfades in and out.
     update_low_shelf(inst, inst->smooth[P_LOW_BOOST], inst->smooth[P_LOW_FREQ],
@@ -858,12 +879,9 @@ static void gresil_process(void *instance, int16_t *audio_inout, int frames) {
         out[i].r = x[1];
     }
 
-    const float fade_step = (reconfigure ? -1.0f : 1.0f) / (kFadeTime * kSampleRate);
     for (int i = 0; i < frames; ++i) {
-        float g = inst->fade;
-        inst->fade = clampf(g + fade_step, 0.0f, 1.0f);
-        float l = clampf(out[i].l * g, -1.0f, 1.0f);
-        float r = clampf(out[i].r * g, -1.0f, 1.0f);
+        float l = clampf(out[i].l, -1.0f, 1.0f);
+        float r = clampf(out[i].r, -1.0f, 1.0f);
         audio_inout[2 * i] = (int16_t)lrintf(l * 32767.0f);
         audio_inout[2 * i + 1] = (int16_t)lrintf(r * 32767.0f);
     }
