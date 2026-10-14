@@ -49,6 +49,7 @@ void Synth::Init(uint16_t* reverb_buffer) {
   wavetable_granular_player_.Init(sr);
   wavetable_voice_.Init(sr);
   bank_quantizer_.Init(kNumBanks, 0.048f, false);
+  wet_filter_.Init();
 }
 
 void Synth::Render(
@@ -116,6 +117,7 @@ void Synth::Render(
         freeze[i],
         p,
         &w);
+    wet_filter_.Process(&w, 1);
     out[i] = dry_modulation.Next() * out[i] + w * wet_modulation.Next();
   }
   

@@ -465,6 +465,115 @@ static void test_mode_migration() {
     api()->destroy_instance(inst);
 }
 
+// Filters page: HPF / LPF shape the effect only. At Mix 0 the output must be
+// the input whatever the filters do; at Mix 100% they must filter.
+static void setup_hp_wet(void *inst) { set(inst, "filter_hp", "1000"); }
+static void setup_lp_wet(void *inst) { set(inst, "filter_lp", "1000"); }
+static void setup_nothing(void *inst) { (void)inst; }
+
+static void test_wet_filters() {
+    // Dry untouched: Mix 0, both filters hard on, compare with the input.
+    void *inst = api()->create_instance("", NULL);
+    set(inst, "dry_wet", "0");
+    set(inst, "reverb", "0");
+    set(inst, "filter_hp", "1000");
+    set(inst, "filter_lp", "1000");
+    Source a, b;
+    int16_t buf[256], ref[256];
+    run(inst, &a, 0.5f);
+    b = a;
+    int max_diff = 0;
+    for (int i = 0; i < 200; ++i) {
+        a.fill(buf, 128);
+        b.fill(ref, 128);
+        api()->process_block(inst, buf, 128);
+        for (int k = 0; k < 256; ++k) max_diff = std::max(max_diff, abs(buf[k] - ref[k]));
+    }
+    CHECK(max_diff <= 2, "HPF/LPF must not touch the dry signal (max diff %d)", max_diff);
+    api()->destroy_instance(inst);
+
+    // Wet filtered: reuse the low/high tilt probe at Mix 100%.
+    double flat = measure_tilt(setup_nothing);
+    double hp = measure_tilt(setup_hp_wet);
+    double lp = measure_tilt(setup_lp_wet);
+    printf("  wet tilt: none %+.1f dB, HPF 1 kHz %+.1f dB, LPF 1 kHz %+.1f dB\n", flat, hp, lp);
+    CHECK(hp < flat - 10.0, "HPF should cut the wet lows (tilt %.1f dB)", hp);
+    CHECK(lp > flat + 2.0, "LPF should tilt the wet towards the lows (tilt %.1f dB)", lp);
+
+    // The filters themselves: Verglas' one-pole (6 dB/oct) response.
+    struct { float hp, lp, freq, expect_db; } cases[] = {
+        { 0, 20000, 100, 0.0f }, { 0, 20000, 8000, 0.0f },   // both off: flat
+        { 0, 1000, 100, 0.0f },  { 0, 1000, 8000, -16.0f },  // LPF 1 kHz
+        { 1000, 20000, 8000, 0.0f }, { 1000, 20000, 100, -18.0f },  // HPF 1 kHz
+    };
+    for (auto &c : cases) {
+        beads::WetFilter f;
+        f.Init();
+        f.set_cutoffs(c.hp, c.lp, 44100.0f);
+        double e_in = 0, e_out = 0;
+        for (int i = 0; i < 44100; ++i) {
+            FloatFrame x;
+            x.l = x.r = 0.5f * sinf(2.0f * (float)M_PI * c.freq * i / 44100.0f);
+            float in_l = x.l;
+            f.Process(&x, 1);
+            if (i > 4410) { e_in += in_l * in_l; e_out += x.l * x.l; }
+        }
+        double db = 10 * log10(e_out / e_in);
+        bool ok = c.expect_db == 0.0f ? fabs(db) < 1.0 : db < c.expect_db + 3.0 && db > c.expect_db - 3.0;
+        CHECK(ok, "WetFilter hp %.0f lp %.0f at %.0f Hz: %.1f dB (expected ~%.0f)",
+              c.hp, c.lp, c.freq, db, c.expect_db);
+    }
+}
+
+static void limiter_on(void *inst) { set(inst, "limiter_on", "On"); set(inst, "limiter_pre", "6"); }
+static void hpf_jump(void *inst) { set(inst, "filter_hp", "1000"); set(inst, "dry_wet", "1"); }
+static void shelf_jump(void *inst) { set(inst, "low_boost", "6"); }
+
+static void test_output_stage() {
+    Source src;
+    void *inst = api()->create_instance("", NULL);
+    set(inst, "dry_wet", "0");
+    max_step(inst, &src, 50, NULL, 0);
+    int worst = max_step(inst, &src, 200, limiter_on, 100);
+    printf("  limiter on (+6 dB pre): max step %d (natural slope ~52 -> ~104)\n", worst);
+    CHECK(worst < 200, "Limiter engage should crossfade (max step %d)", worst);
+    api()->destroy_instance(inst);
+
+    inst = api()->create_instance("", NULL);
+    set(inst, "dry_wet", "0");
+    max_step(inst, &src, 50, NULL, 0);
+    worst = max_step(inst, &src, 200, shelf_jump, 100);
+    printf("  low boost 0 -> 6 dB: max step %d\n", worst);
+    CHECK(worst < 150, "Low Boost jump should be smooth (max step %d)", worst);
+    api()->destroy_instance(inst);
+
+    // Low shelf acts on the whole output (dry included), as in Verglas.
+    inst = api()->create_instance("", NULL);
+    set(inst, "dry_wet", "0");
+    set(inst, "low_boost", "6");
+    set(inst, "low_freq", "400");
+    Stats st;
+    Source low;
+    run(inst, &low, 0.5f);
+    run(inst, &low, 1.0f, &st);
+    // Input: 220/331 Hz sines at 0.5 * (0.75..1) amplitude, rms ~0.31.
+    printf("  low shelf +6 dB @ 400 Hz on a 220/331 Hz input: rms %.3f\n", st.rms());
+    CHECK(st.rms() > 0.42, "Low Boost should lift the output lows (rms %f)", st.rms());
+    api()->destroy_instance(inst);
+
+    inst = api()->create_instance("", NULL);
+    set(inst, "_level", "Filters");
+    CHECK(get(inst, "knob_1_name") == "HPF", "Filters knob 1 is HPF");
+    CHECK(get(inst, "knob_1_value") == "Off", "HPF default reads Off: %s", get(inst, "knob_1_value").c_str());
+    CHECK(get(inst, "knob_2_value") == "Off", "LPF default reads Off: %s", get(inst, "knob_2_value").c_str());
+    CHECK(get(inst, "knob_3_name") == "Drive", "Filters knob 3 is Drive");
+    set(inst, "knob_1_adjust", "25");
+    CHECK(get(inst, "knob_1_value") == "250 Hz", "HPF display: %s", get(inst, "knob_1_value").c_str());
+    set(inst, "_level", "Setup");
+    CHECK(get(inst, "knob_4_name") == "Limiter", "Setup knob 4 is Limiter");
+    api()->destroy_instance(inst);
+}
+
 static std::string prettify(const std::string &json) {
     std::string out;
     for (char ch : json) {
@@ -490,6 +599,13 @@ static void test_state_roundtrip() {
     set(a, "dry", "Media");
     set(a, "mono_grains", "On");
     set(a, "freeze_save", "Off");
+    set(a, "filter_hp", "250");
+    set(a, "filter_lp", "6000");
+    set(a, "limiter_on", "On");
+    set(a, "limiter_pre", "3.5");
+    set(a, "low_boost", "4.5");
+    set(a, "low_freq", "180");
+    set(a, "low_q", "1.3");
     std::string state = get(a, "state");
     CHECK(state.size() > 10 && state[0] == '{', "state should be JSON: %s", state.c_str());
 
@@ -639,6 +755,8 @@ int main() {
     test_audible_after_media_change();
     test_mode_and_filter();
     test_mode_migration();
+    test_wet_filters();
+    test_output_stage();
     test_clean_dry_is_transparent();
     test_synth_source();
     test_clock_pll();

@@ -152,7 +152,25 @@ smoother per sub-block (~4 ms).
 | seed | Seed | Free / Clock | Free | Clock: MIDI clock drives the SEED input with the button locked |
 | clock_div | Clock Div | 1/32 … 1 Bar | 1/8 | Gate rate fed to SEED. In delay mode the delay time is a ratio of this interval |
 
-### Page 3 — Setup (Mode is knob 1)
+### Page 3 — Filters (from Verglas)
+
+| Key | Name | Range | Default | Notes |
+|---|---|---|---|---|
+| filter_hp | HPF | 0–1000 Hz | 0 (Off) | One-pole 6 dB/oct, **wet only**: applied in `Processor` / `Synth` before the dry/wet mix (and outside the feedback loop) |
+| filter_lp | LPF | 1000–20000 Hz | 20000 (Off) | Same, low-pass, wet only |
+| drive | Drive | 0–24 dB | 0 | Moved here from Setup (input gain, per-media soft clip) |
+| limiter_pre | Pre Gain | −6..+6 dB | 0 | Into the tape limiter |
+| limiter_post | Post Gain | −6..+6 dB | 0 | Out of the tape limiter |
+| low_boost | Low Boost | 0–6 dB | 0 | Low-shelf biquad on the whole output, as in Verglas |
+| low_freq | Low Freq | 30–400 Hz | 100 | |
+| low_q | Low Q | 0.1–4 | 0.7 | |
+
+Everything runs all the time (no bypass branches): "HPF Off" tracks at 5 Hz,
+"LPF Off" passes straight through, the shelf is unity at 0 dB, and the
+limiter crossfades in and out over 10 ms. Cutoffs, gains and the shelf
+follow the per-sub-block smoothed values.
+
+### Page 4 — Setup (Mode is knob 1, Limiter on/off is knob 4)
 
 | Key | Name | Range | Default | Notes |
 |---|---|---|---|---|
@@ -160,7 +178,7 @@ smoother per sub-block (~4 ms).
 | filter | Filter | −1..+1 | 0 | Delay mode only (replaces Size on the Beads page and Size Rnd on the Random page): − low-pass, + high-pass, both resonant, Beads' attenuverter law. Hardware: the Size attenuverter in delay mode |
 | source | Source | Input / Synth | Input | Synth: Beads' wavetable voice. Time scans the wave, Feedback picks the bank |
 | buffer | Buffer | Stereo / Mono | Stereo | Mono sums L+R and doubles the recording time (hardware: auto-detected from patching) |
-| drive | Drive | 0–24 dB | 0 | Input gain. Dirty Tape always soft-clips; Clean Tape blends in soft clipping up to 12 dB; Vintage/Digital clip hard |
+| limiter_on | Limiter | Off/On | Off | Verglas tape limiter (Chowdhury cubic + Airwindows IronOxide) on the final output; gains on the Filters page |
 | dry | Dry | Clean / Media | Clean | Media: hardware dry path (degraded, −2.5 dB) |
 | mono_grains | Mono Grain | Off/On | Off | Beads' hidden monophonic mode (each grain cuts the previous) |
 | freeze_save | Frz Save | Off/On | On | Save a frozen buffer with the set |

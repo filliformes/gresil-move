@@ -110,7 +110,10 @@ enum ParamId {
     P_TIME_RND, P_SIZE_RND, P_SHAPE_RND, P_PITCH_RND,
     P_FREEZE, P_MEDIA, P_SEED, P_CLOCK_DIV,
     P_SOURCE, P_BUFFER, P_DRIVE, P_DRY, P_MONO_GRAINS, P_FREEZE_SAVE,
-    P_MODE, P_FILTER, P_TRIM,
+    P_MODE, P_FILTER,
+    P_FILTER_HP, P_FILTER_LP, P_LIMITER_ON, P_LIMITER_PRE, P_LIMITER_POST,
+    P_LOW_BOOST, P_LOW_FREQ, P_LOW_Q,
+    P_TRIM,
     P_COUNT
 };
 
@@ -173,19 +176,32 @@ static const ParamDef PARAMS[P_COUNT] = {
     // Size attenuverter doubles as the delay filter. On Move both are explicit.
     ENUM_DEF("mode",        "Mode",       OPT_MODE,      0),
     { "filter",      "Filter",    T_FLOAT, -1,  1,  0.01f, 0,     NULL, 0 },
+    // Filters page, from Verglas. HPF/LPF act on the wet signal only (inside
+    // the processor, before the dry/wet mix); the low shelf and the tape
+    // limiter act on the final output, as in Verglas.
+    { "filter_hp",   "HPF",       T_FLOAT, 0,   1000,  10,   0,     NULL, 0 },
+    { "filter_lp",   "LPF",       T_FLOAT, 1000, 20000, 10,  20000, NULL, 0 },
+    ENUM_DEF("limiter_on",  "Limiter",    OPT_OFF_ON,    0),
+    { "limiter_pre", "Pre Gain",  T_FLOAT, -6,  6,  0.5f,  0,     NULL, 0 },
+    { "limiter_post","Post Gain", T_FLOAT, -6,  6,  0.5f,  0,     NULL, 0 },
+    { "low_boost",   "Low Boost", T_FLOAT, 0,   6,  0.5f,  0,     NULL, 0 },
+    { "low_freq",    "Low Freq",  T_FLOAT, 30,  400, 10,   100,   NULL, 0 },
+    { "low_q",       "Low Q",     T_FLOAT, 0.1f, 4, 0.1f,  0.7f,  NULL, 0 },
     { "trim",        "Trim",      T_TRIGGER, 0, 1,  1,     0,     OPT_OFF_ON, 2 },
 };
 
 // Knob pages. The _level names match ui_hierarchy.
-enum Page { PAGE_BEADS, PAGE_RANDOM, PAGE_SETUP, PAGE_COUNT };
-static const char *PAGE_NAMES[PAGE_COUNT] = { "Beads", "Random", "Setup" };
+enum Page { PAGE_BEADS, PAGE_RANDOM, PAGE_FILTERS, PAGE_SETUP, PAGE_COUNT };
+static const char *PAGE_NAMES[PAGE_COUNT] = { "Beads", "Random", "Filters", "Setup" };
 // Knob 2 of the Beads and Random pages is Size / Size Rnd in granular mode and
 // the delay Filter in delay mode (ui_hierarchy swaps them with visible_if).
 static const int PAGE_KNOBS[PAGE_COUNT][8] = {
     { P_TIME, P_SIZE, P_SHAPE, P_DENSITY, P_PITCH, P_FEEDBACK, P_REVERB, P_MIX },
     { P_TIME_RND, P_SIZE_RND, P_SHAPE_RND, P_PITCH_RND,
       P_FREEZE, P_MEDIA, P_SEED, P_CLOCK_DIV },
-    { P_MODE, P_SOURCE, P_BUFFER, P_DRIVE, P_DRY, P_MONO_GRAINS, P_FREEZE_SAVE, P_TRIM },
+    { P_FILTER_HP, P_FILTER_LP, P_DRIVE, P_LIMITER_PRE, P_LIMITER_POST,
+      P_LOW_BOOST, P_LOW_FREQ, P_LOW_Q },
+    { P_MODE, P_SOURCE, P_BUFFER, P_LIMITER_ON, P_DRY, P_MONO_GRAINS, P_FREEZE_SAVE, P_TRIM },
 };
 
 // Beads' delay crossfade starts above size 0.99 (0.98 once in delay mode).
@@ -363,6 +379,13 @@ struct GresilInstance {
     float drive_gain;               // per-sample smoothed input gain
     float soft_amount;              // per-sample smoothed soft-clip blend
 
+    // Output stage (Filters page): low-shelf biquad (DF2T) + tape limiter.
+    float ls_b0, ls_b1, ls_b2, ls_a1, ls_a2;
+    float ls_z1[2], ls_z2[2];
+    float ls_last_boost, ls_last_freq, ls_last_q;
+    float limiter_mix;              // 0 = bypass, 1 = limited (ramped)
+    float limiter_pre_gain, limiter_post_gain;
+
     stmlib::GateFlags previous_seed;
     ClockSync clock;
 
@@ -393,6 +416,45 @@ static inline int ival(const GresilInstance *inst, int id) {
 }
 
 // Beads' attenuverter pot law: dead zone around noon, quadratic response.
+static inline float db_to_lin(float db) {
+    return powf(10.0f, db * 0.05f);
+}
+
+// Tape-style soft clip limiter, from Verglas: Chowdhury DSP cubic soft clip
+// into an Airwindows IronOxide sine shaper. Stateless, output within +-1.
+static inline float tape_soft_clip(float x) {
+    float ax = fabsf(x);
+    if (ax > 1.5f) {
+        x = (x > 0.0f) ? 1.0f : -1.0f;
+    } else {
+        float cn = clampf(x * 0.6666667f, -1.0f, 1.0f);
+        x = (cn - (cn * cn * cn) * 0.3333333f) * 1.5f;
+    }
+    float bridge = fabsf(x);
+    if (bridge > 1.5707963f) bridge = 1.5707963f;
+    bridge = sinf(bridge);
+    return (x > 0.0f) ? bridge : -bridge;
+}
+
+// Low-shelf biquad coefficients (Audio EQ Cookbook), from Verglas.
+static void update_low_shelf(GresilInstance *inst, float boost, float freq, float q) {
+    if (boost == inst->ls_last_boost && freq == inst->ls_last_freq && q == inst->ls_last_q) return;
+    inst->ls_last_boost = boost;
+    inst->ls_last_freq = freq;
+    inst->ls_last_q = q;
+    float A = powf(10.0f, boost * 0.025f);
+    float w0 = 6.2831853f * freq / kSampleRate;
+    float cosw0 = cosf(w0);
+    float alpha = sinf(w0) / (2.0f * q);
+    float sqrtA2alpha = 2.0f * sqrtf(A) * alpha;
+    float inv_a0 = 1.0f / ((A + 1.0f) + (A - 1.0f) * cosw0 + sqrtA2alpha);
+    inst->ls_b0 = A * ((A + 1.0f) - (A - 1.0f) * cosw0 + sqrtA2alpha) * inv_a0;
+    inst->ls_b1 = 2.0f * A * ((A - 1.0f) - (A + 1.0f) * cosw0) * inv_a0;
+    inst->ls_b2 = A * ((A + 1.0f) - (A - 1.0f) * cosw0 - sqrtA2alpha) * inv_a0;
+    inst->ls_a1 = -2.0f * ((A - 1.0f) + (A + 1.0f) * cosw0) * inv_a0;
+    inst->ls_a2 = ((A + 1.0f) + (A - 1.0f) * cosw0 - sqrtA2alpha) * inv_a0;
+}
+
 static inline float attenuverter_law(float a) {
     float v = a * 0.5f;
     float m = fabsf(v) - 0.03f;
@@ -757,6 +819,11 @@ static void gresil_process(void *instance, int16_t *audio_inout, int frames) {
         beads::ModulatedParameter density;
         beads::Processor::MixParameters m;
         build_parameters(inst, &p, &density, &m);
+        // Both engines get the cutoffs so a source switch carries them over.
+        inst->processor.mutable_wet_filter()->set_cutoffs(
+            inst->smooth[P_FILTER_HP], inst->smooth[P_FILTER_LP], kSampleRate);
+        inst->synth.mutable_wet_filter()->set_cutoffs(
+            inst->smooth[P_FILTER_HP], inst->smooth[P_FILTER_LP], kSampleRate);
 
         const stmlib::GateFlags *seed_in = use_clock ? &seed[offset] : NULL;
         if (synth_mode) {
@@ -769,6 +836,37 @@ static void gresil_process(void *instance, int16_t *audio_inout, int frames) {
                 beads::SEED_BUTTON_STATE_LOCKED, seed_in, freeze,
                 density, p, m, &in[offset], &out[offset], (size_t)n);
         }
+    }
+
+    // Output stage. Both run all the time (no bypass branch to click on):
+    // the shelf is unity at 0 dB, the limiter crossfades in and out.
+    update_low_shelf(inst, inst->smooth[P_LOW_BOOST], inst->smooth[P_LOW_FREQ],
+                     inst->smooth[P_LOW_Q]);
+    const float pre_target = db_to_lin(inst->smooth[P_LIMITER_PRE]);
+    const float post_target = db_to_lin(inst->smooth[P_LIMITER_POST]);
+    const float pre_step = (pre_target - inst->limiter_pre_gain) / frames;
+    const float post_step = (post_target - inst->limiter_post_gain) / frames;
+    const float mix_target = ival(inst, P_LIMITER_ON) ? 1.0f : 0.0f;
+    const float mix_step = 1.0f / (kFadeTime * kSampleRate);
+    for (int i = 0; i < frames; ++i) {
+        float x[2] = { out[i].l, out[i].r };
+        inst->limiter_pre_gain += pre_step;
+        inst->limiter_post_gain += post_step;
+        float lm = inst->limiter_mix;
+        lm = lm < mix_target ? fminf(lm + mix_step, mix_target) : fmaxf(lm - mix_step, mix_target);
+        inst->limiter_mix = lm;
+        for (int c = 0; c < 2; ++c) {
+            float y = inst->ls_b0 * x[c] + inst->ls_z1[c];
+            inst->ls_z1[c] = inst->ls_b1 * x[c] - inst->ls_a1 * y + inst->ls_z2[c];
+            inst->ls_z2[c] = inst->ls_b2 * x[c] - inst->ls_a2 * y;
+            if (lm > 0.0f) {
+                float limited = tape_soft_clip(y * inst->limiter_pre_gain) * inst->limiter_post_gain;
+                y += (limited - y) * lm;
+            }
+            x[c] = y;
+        }
+        out[i].l = x[0];
+        out[i].r = x[1];
     }
 
     const float fade_step = (reconfigure ? -1.0f : 1.0f) / (kFadeTime * kSampleRate);
@@ -815,6 +913,11 @@ static void *gresil_create(const char *module_dir, const char *config_json) {
     inst->fade = 1.0f;
     inst->drive_gain = 1.0f;
     inst->soft_amount = 0.0f;
+    inst->ls_last_boost = -999.0f;  // force the first coefficient update
+    update_low_shelf(inst, PARAMS[P_LOW_BOOST].def, PARAMS[P_LOW_FREQ].def, PARAMS[P_LOW_Q].def);
+    inst->limiter_pre_gain = 1.0f;
+    inst->limiter_post_gain = 1.0f;
+    inst->limiter_mix = 0.0f;
     inst->previous_seed = stmlib::GATE_FLAG_LOW;
     clock_init(&inst->clock);
     apply_configuration(inst);
@@ -952,6 +1055,22 @@ static int format_display(const GresilInstance *inst, int id, char *buf, int buf
         case P_SHAPE_RND:
         case P_PITCH_RND:
             return snprintf(buf, buf_len, "%+d%%", (int)lrintf(v * 100.0f));
+        case P_FILTER_HP:
+            if (v < 1.0f) return snprintf(buf, buf_len, "Off");
+            return snprintf(buf, buf_len, "%d Hz", (int)lrintf(v));
+        case P_FILTER_LP:
+            if (v > 19999.0f) return snprintf(buf, buf_len, "Off");
+            return snprintf(buf, buf_len, "%d Hz", (int)lrintf(v));
+        case P_LIMITER_PRE:
+        case P_LIMITER_POST:
+            return snprintf(buf, buf_len, "%+.1f dB", v);
+        case P_LOW_BOOST:
+            if (v < 0.1f) return snprintf(buf, buf_len, "Off");
+            return snprintf(buf, buf_len, "+%.1f dB", v);
+        case P_LOW_FREQ:
+            return snprintf(buf, buf_len, "%d Hz", (int)lrintf(v));
+        case P_LOW_Q:
+            return snprintf(buf, buf_len, "%.1f", v);
         case P_DRIVE:
             return snprintf(buf, buf_len, "+%.1f dB", v);
         default:

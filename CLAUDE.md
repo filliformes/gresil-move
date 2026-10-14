@@ -12,7 +12,8 @@ Read `design-spec.md` for the full design. This file is the compressed version.
 
 ## Layout
 - `src/gresil_move.cpp`: wrapper (params, knob overlay, state, clock PLL, freeze-save worker)
-- `src/beads/dsp/`: upstream Beads DSP with small patches marked "Gresil"
+- `src/beads/dsp/`: upstream Beads DSP with small patches marked "Gresil";
+  `wet_filter.h` (wet-only HPF/LPF) is a Gresil addition
 - `src/beads/resources.*`: upstream tables (lut_sine, wavetables)
 - `src/stmlib/`: fresh stmlib (not Verglas' copy)
 - `src/module.json`: single source of truth for chain_params + ui_hierarchy (DSP returns -1)
@@ -50,6 +51,10 @@ must match `src/module.json` version.
   0.975; delay mode passes size.base = 1 and the `filter` param as the Size
   attenuverter. Knob 2 on Beads/Random swaps via `visible_if` (keep
   `knob_param()` in sync with ui_hierarchy).
+- Pages: Beads, Random, Filters, Setup (`PAGE_KNOBS` must match ui_hierarchy).
+  HPF/LPF are wet-only (WetFilter inside Processor/Synth, before the mix);
+  Low Boost and the Limiter act on the whole output after the engine. No
+  bypass branches in either stage.
 
 ## Move constraints
 - 44100 Hz, 128 frames, int16 stereo; `-ffast-math`; files on device `ableton:users`

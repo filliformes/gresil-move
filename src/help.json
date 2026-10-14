@@ -41,6 +41,21 @@
       ]
     },
     {
+      "title": "Filters",
+      "lines": [
+        "HPF / LPF: filter the",
+        " effect only; the dry",
+        " signal is untouched.",
+        "Drive: input gain. Tape",
+        " media soft-clip it.",
+        "Pre / Post Gain: into and",
+        " out of the Limiter",
+        " (Setup page).",
+        "Low Boost / Freq / Q:",
+        " low shelf on the output."
+      ]
+    },
+    {
       "title": "Setup",
       "lines": [
         "Mode: Granular or Delay",
@@ -51,8 +66,9 @@
         " Feedback picks the bank,",
         " Time scans the wave.",
         "Buffer Mono: 2x longer.",
-        "Drive: input gain. Tape",
-        " media soft-clip it.",
+        "Limiter: tape limiter on",
+        " the output (gains on the",
+        " Filters page).",
         "Dry Media: dry path is",
         " colored like hardware.",
         "Frz Save: a frozen buffer",

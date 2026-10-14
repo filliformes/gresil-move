@@ -22,16 +22,19 @@ docker cp $(docker create gresil-builder):/build/modules/gresil ./modules/
 
 ## Pages
 
-| Knob | Beads | Random | Setup |
-|---|---|---|---|
-| 1 | Time | Time Rnd | Mode (Granular/Delay) |
-| 2 | Size (Delay: Filter) | Size Rnd (Delay: Filter) | Source |
-| 3 | Shape | Shape Rnd | Buffer |
-| 4 | Density | Pitch Rnd | Drive |
-| 5 | Pitch | Freeze | Dry |
-| 6 | Feedback | Media | Mono Grain |
-| 7 | Reverb | Seed (Free/Clock) | Frz Save |
-| 8 | Mix | Clock Div | Trim |
+| Knob | Beads | Random | Filters | Setup |
+|---|---|---|---|---|
+| 1 | Time | Time Rnd | HPF (wet only) | Mode (Granular/Delay) |
+| 2 | Size (Delay: Filter) | Size Rnd (Delay: Filter) | LPF (wet only) | Source |
+| 3 | Shape | Shape Rnd | Drive | Buffer |
+| 4 | Density | Pitch Rnd | Pre Gain | Limiter |
+| 5 | Pitch | Freeze | Post Gain | Dry |
+| 6 | Feedback | Media | Low Boost | Mono Grain |
+| 7 | Reverb | Seed (Free/Clock) | Low Freq | Frz Save |
+| 8 | Mix | Clock Div | Low Q | Trim |
+
+The Filters page comes from Verglas. HPF and LPF only shape the effect (the
+dry signal is untouched); Low Boost and the Limiter act on the whole output.
 
 ## Credits
 

@@ -37,6 +37,7 @@
 #include "beads/dsp/wavetable_granular_player.h"
 #include "beads/dsp/wavetable_voice.h"
 #include "beads/dsp/fx/reverb.h"
+#include "beads/dsp/wet_filter.h"
 
 namespace beads {
 
@@ -56,6 +57,9 @@ class Synth {
   
   void Init(uint16_t* reverb_buffer);
   void Reset();
+
+  // Gresil: HPF/LPF on the grain (wet) path only.
+  inline WetFilter* mutable_wet_filter() { return &wet_filter_; }
   
   void Render(
       SeedButtonState seed_button_state,
@@ -77,6 +81,7 @@ class Synth {
   Reverb reverb_;
   Limiter pre_reverb_limiter_;
   Limiter output_limiter_;
+  WetFilter wet_filter_;
   
   WavetableGranularPlayer wavetable_granular_player_;
   WavetableVoice wavetable_voice_;

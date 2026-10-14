@@ -57,6 +57,7 @@ void Processor::Init(
     }
   }
   clean_dry_ = true;
+  wet_filter_.Init();
   
   dry_ = 0.0f;
   wet_ = 0.0f;
@@ -223,6 +224,10 @@ void Processor::Process(
   if (clean_dry_) {
     copy(&in[0], &in[size], &dry_signal[0]);
   }
+
+  // Gresil: wet-only HPF/LPF (the Filters page). Outside the granular
+  // processor, so it does not colour the feedback loop either.
+  wet_filter_.Process(out, size);
 
   // Fade-out / Fade-in the dry signal when switching between granular and
   // Delay mode.

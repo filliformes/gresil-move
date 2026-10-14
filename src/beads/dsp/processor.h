@@ -35,6 +35,7 @@
 #include "beads/dsp/modulated_parameter.h"
 #include "beads/dsp/fx/reverb.h"
 #include "beads/dsp/fx/wow_and_flutter.h"
+#include "beads/dsp/wet_filter.h"
 
 // Setting this flag slows down the codec to 24kHz for the MEDIA_DIRTY_TAPE
 // setting. The codec becomes very hissy at this sample rate, but this has
@@ -79,6 +80,9 @@ class Processor {
   // (transparent at Mix = 0). When clear, the dry path is degraded by the
   // media and attenuated as on the hardware.
   inline void set_clean_dry(bool clean_dry) { clean_dry_ = clean_dry; }
+
+  // Gresil: HPF/LPF on the wet signal only (before the dry/wet mix).
+  inline WetFilter* mutable_wet_filter() { return &wet_filter_; }
   void Configure(Media media, bool mono);
   
   inline Media media() const { return media_; }
@@ -207,6 +211,7 @@ class Processor {
   bool clean_dry_;
   bool process_dry_;
   stmlib::Svf vintage_lp_[2][2];
+  WetFilter wet_filter_;
   bool mono_;
   
   float delay_mode_transition_;
