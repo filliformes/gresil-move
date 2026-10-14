@@ -11,13 +11,16 @@
 //
 // Audio: 44100 Hz, 128 frames/block, stereo interleaved int16. The Beads
 // engine runs in 16-frame sub-blocks to stay close to its 4kHz control rate.
+//
+// Knob pages, labels and units come from module.json (chain_params +
+// ui_hierarchy). Schwung >= 1.0 reads and writes params by key; it never sends
+// _level or knob_N_* to an audio FX, so this file has no knob-overlay layer.
 
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
 #endif
 
 #include <atomic>
-#include <cerrno>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -84,8 +87,6 @@ typedef struct audio_fx_api_v2 {
 }  // extern "C"
 
 static const host_api_v1_t *g_host = NULL;
-
-#define GRESIL_VERSION "0.1.0"
 
 // ---- Constants ----
 static const int kMaxFrames = 128;
@@ -188,20 +189,6 @@ static const ParamDef PARAMS[P_COUNT] = {
     { "low_freq",    "Low Freq",  T_FLOAT, 30,  400, 10,   100,   NULL, 0 },
     { "low_q",       "Low Q",     T_FLOAT, 0.1f, 4, 0.1f,  0.7f,  NULL, 0 },
     { "trim",        "Trim",      T_TRIGGER, 0, 1,  1,     0,     OPT_OFF_ON, 2 },
-};
-
-// Knob pages. The _level names match ui_hierarchy.
-enum Page { PAGE_BEADS, PAGE_RANDOM, PAGE_FILTERS, PAGE_SETUP, PAGE_COUNT };
-static const char *PAGE_NAMES[PAGE_COUNT] = { "Beads", "Random", "Filters", "Setup" };
-// Knob 2 of the Beads and Random pages is Size / Size Rnd in granular mode and
-// the delay Filter in delay mode (ui_hierarchy swaps them with visible_if).
-static const int PAGE_KNOBS[PAGE_COUNT][8] = {
-    { P_TIME, P_SIZE, P_SHAPE, P_DENSITY, P_PITCH, P_FEEDBACK, P_REVERB, P_MIX },
-    { P_TIME_RND, P_SIZE_RND, P_SHAPE_RND, P_PITCH_RND,
-      P_FREEZE, P_MEDIA, P_SEED, P_CLOCK_DIV },
-    { P_FILTER_HP, P_FILTER_LP, P_DRIVE, P_LIMITER_PRE, P_LIMITER_POST,
-      P_LOW_BOOST, P_LOW_FREQ, P_LOW_Q },
-    { P_MODE, P_SOURCE, P_BUFFER, P_LIMITER_ON, P_DRY, P_MONO_GRAINS, P_FREEZE_SAVE, P_TRIM },
 };
 
 // Beads' delay crossfade starts above size 0.99 (0.98 once in delay mode).
@@ -397,9 +384,6 @@ struct GresilInstance {
     int saved_this_freeze;
     int frozen_samples;
     int trim_request;
-    int restoring;
-
-    int current_page;
 };
 
 // ---- Helpers ----
@@ -415,7 +399,6 @@ static inline int ival(const GresilInstance *inst, int id) {
     return (int)lrintf(inst->value[id]);
 }
 
-// Beads' attenuverter pot law: dead zone around noon, quadratic response.
 static inline float db_to_lin(float db) {
     return powf(10.0f, db * 0.05f);
 }
@@ -455,6 +438,7 @@ static void update_low_shelf(GresilInstance *inst, float boost, float freq, floa
     inst->ls_a2 = ((A + 1.0f) + (A - 1.0f) * cosw0 - sqrtA2alpha) * inv_a0;
 }
 
+// Beads' attenuverter pot law: dead zone around noon, quadratic response.
 static inline float attenuverter_law(float a) {
     float v = a * 0.5f;
     float m = fabsf(v) - 0.03f;
@@ -670,10 +654,10 @@ static inline void build_parameters(GresilInstance *inst,
                                     beads::Processor::MixParameters *m) {
     const float *v = inst->smooth;
     p->time.base = v[P_TIME];
-    p->time.attenuverter = attenuverter_law(inst->value[P_TIME_RND]);
+    p->time.attenuverter = attenuverter_law(v[P_TIME_RND]);
     p->time.cv = 0.0f;
     p->time.has_cv = false;
-    if (ival(inst, P_MODE) == 1) {
+    if (delay_mode(inst)) {
         // Delay: the processor enters its multitap mode when size.base is at
         // the top, and reads the delay filter from the Size attenuverter
         // (bandwidth = (1 + attenuverter) / 2: - low-pass, + high-pass).
@@ -681,16 +665,16 @@ static inline void build_parameters(GresilInstance *inst,
         p->size.attenuverter = attenuverter_law(v[P_FILTER]);
     } else {
         p->size.base = v[P_SIZE] < kGranularMaxSize ? v[P_SIZE] : kGranularMaxSize;
-        p->size.attenuverter = attenuverter_law(inst->value[P_SIZE_RND]);
+        p->size.attenuverter = attenuverter_law(v[P_SIZE_RND]);
     }
     p->size.cv = 0.0f;
     p->size.has_cv = false;
     p->shape.base = v[P_SHAPE];
-    p->shape.attenuverter = attenuverter_law(inst->value[P_SHAPE_RND]);
+    p->shape.attenuverter = attenuverter_law(v[P_SHAPE_RND]);
     p->shape.cv = 0.0f;
     p->shape.has_cv = false;
     p->pitch.base = inst->value[P_PITCH];
-    p->pitch.attenuverter = attenuverter_law(inst->value[P_PITCH_RND]);
+    p->pitch.attenuverter = attenuverter_law(v[P_PITCH_RND]);
     p->pitch.cv = 0.0f;
     p->pitch.has_cv = false;
     p->monophonic_mode = ival(inst, P_MONO_GRAINS) != 0;
@@ -718,7 +702,9 @@ static void gresil_process(void *instance, int16_t *audio_inout, int frames) {
 
     // Media / buffer / source changes wipe or swap the engine: fade the output
     // out first, reconfigure at silence, then fade back in.
-    bool reconfigure = configuration_pending(inst);
+    // Never while a freeze restore is filling the delay banks: Configure()
+    // would clear them under the worker's feet. The change waits for the load.
+    bool reconfigure = configuration_pending(inst) && !inst->loading;
     if (reconfigure && inst->fade <= 0.0f) {
         // Clearing the 768 KB buffer is the heaviest thing Gresil ever does
         // on the callback: give it the block to itself. The output is already
@@ -753,7 +739,10 @@ static void gresil_process(void *instance, int16_t *audio_inout, int frames) {
     update_freeze_save(inst, frames);
 
     // Input conversion with drive. The tape media soft-clip like the
-    // hardware's manual-gain path; the digital media clip hard. Gain and
+    // hardware's manual-gain path (its auto-gain default never clips, so at
+    // Drive 0 nothing does and the dry stays clean); the digital media clip
+    // hard. Dirty Tape is fully soft-clipped from +3 dB, Clean Tape blends in
+    // up to +12 dB. Gain and
     // soft-clip blend are smoothed per sample (Drive moves in 0.5 dB steps,
     // which clicked when applied once per block), and both paths are always
     // computed so the blend never switches branch mid-signal.
@@ -761,7 +750,7 @@ static void gresil_process(void *instance, int16_t *audio_inout, int frames) {
     const float drive_target = powf(10.0f, inst->value[P_DRIVE] * 0.05f);
     float soft_target = 0.0f;
     if (media == beads::Processor::MEDIA_DIRTY_TAPE) {
-        soft_target = 1.0f;
+        soft_target = clampf(inst->value[P_DRIVE] / 3.0f, 0.0f, 1.0f);
     } else if (media == beads::Processor::MEDIA_CLEAN_TAPE) {
         soft_target = clampf(inst->value[P_DRIVE] / 12.0f, 0.0f, 1.0f);
     }
@@ -980,17 +969,6 @@ static void set_value(GresilInstance *inst, int id, const char *val) {
     inst->value[id] = v;
 }
 
-static void adjust_value(GresilInstance *inst, int id, int delta) {
-    const ParamDef &d = PARAMS[id];
-    if (d.type == T_TRIGGER) {
-        if (delta > 0) inst->trim_request = 1;
-        return;
-    }
-    float v = inst->value[id] + delta * d.step;
-    if (d.type != T_FLOAT) v = (float)lrintf(v);
-    inst->value[id] = clampf(v, d.min, d.max);
-}
-
 // Raw value, as used by the menu and the state snapshot (no units).
 static int format_raw(const GresilInstance *inst, int id, char *buf, int buf_len) {
     const ParamDef &d = PARAMS[id];
@@ -1005,81 +983,6 @@ static int format_raw(const GresilInstance *inst, int id, char *buf, int buf_len
         default:
             return snprintf(buf, buf_len, "%.4f", inst->value[id]);
     }
-}
-
-static const char *knob_label(const GresilInstance *inst, int id) {
-    const bool synth = ival(inst, P_SOURCE) == 1;
-    const bool delay = delay_mode(inst);
-    if (synth) {
-        if (id == P_TIME) return "Wave";
-        if (id == P_FEEDBACK) return "Bank";
-        if (id == P_MIX) return "Osc/Grain";
-    }
-    if (delay) {
-        if (id == P_TIME) return "Slice";
-        if (id == P_SHAPE) return "Envelope";
-        if (id == P_DENSITY) return ival(inst, P_SEED) == 1 ? "Ratio" : "Delay Time";
-    }
-    return PARAMS[id].name;
-}
-
-// Physical knob -> param for the current page, following the mode swap.
-static int knob_param(const GresilInstance *inst, int knob) {
-    int id = PAGE_KNOBS[inst->current_page][knob];
-    if (ival(inst, P_MODE) == 1 && (id == P_SIZE || id == P_SIZE_RND)) id = P_FILTER;
-    return id;
-}
-
-// Display value for the knob overlay (units allowed here only).
-static int format_display(const GresilInstance *inst, int id, char *buf, int buf_len) {
-    const float v = inst->value[id];
-    const bool synth = ival(inst, P_SOURCE) == 1;
-    switch (id) {
-        case P_PITCH:
-            return snprintf(buf, buf_len, "%+d st", ival(inst, id));
-        case P_DENSITY:
-            if (v >= 0.48f && v <= 0.52f) return snprintf(buf, buf_len, "Off");
-            if (v < 0.48f) {
-                return snprintf(buf, buf_len, "Reg %d%%", (int)((0.48f - v) / 0.48f * 100.0f + 0.5f));
-            }
-            return snprintf(buf, buf_len, "Rnd %d%%", (int)((v - 0.52f) / 0.48f * 100.0f + 0.5f));
-        case P_FEEDBACK:
-            if (synth) return snprintf(buf, buf_len, "%d", (int)(v * 11.999f) + 1);
-            break;
-        case P_FILTER:
-            if (fabsf(v) < 0.03f) return snprintf(buf, buf_len, "Off");  // pot-law dead zone
-            return snprintf(buf, buf_len, "%s %d%%", v < 0.0f ? "LP" : "HP",
-                            (int)(fabsf(v) * 100.0f + 0.5f));
-        case P_SIZE_RND:
-        case P_TIME_RND:
-        case P_SHAPE_RND:
-        case P_PITCH_RND:
-            return snprintf(buf, buf_len, "%+d%%", (int)lrintf(v * 100.0f));
-        case P_FILTER_HP:
-            if (v < 1.0f) return snprintf(buf, buf_len, "Off");
-            return snprintf(buf, buf_len, "%d Hz", (int)lrintf(v));
-        case P_FILTER_LP:
-            if (v > 19999.0f) return snprintf(buf, buf_len, "Off");
-            return snprintf(buf, buf_len, "%d Hz", (int)lrintf(v));
-        case P_LIMITER_PRE:
-        case P_LIMITER_POST:
-            return snprintf(buf, buf_len, "%+.1f dB", v);
-        case P_LOW_BOOST:
-            if (v < 0.1f) return snprintf(buf, buf_len, "Off");
-            return snprintf(buf, buf_len, "+%.1f dB", v);
-        case P_LOW_FREQ:
-            return snprintf(buf, buf_len, "%d Hz", (int)lrintf(v));
-        case P_LOW_Q:
-            return snprintf(buf, buf_len, "%.1f", v);
-        case P_DRIVE:
-            return snprintf(buf, buf_len, "+%.1f dB", v);
-        default:
-            break;
-    }
-    if (PARAMS[id].type == T_FLOAT) {
-        return snprintf(buf, buf_len, "%d%%", (int)(v * 100.0f + 0.5f));
-    }
-    return format_raw(inst, id, buf, buf_len);
 }
 
 // State: every user-settable key (Trim excluded) plus the freeze file id.
@@ -1107,7 +1010,6 @@ static void gresil_set_param(void *instance, const char *key, const char *val);
 
 static void restore_state(GresilInstance *inst, const char *json) {
     char vb[64];
-    inst->restoring = 1;
     for (int k = 0; k < P_COUNT; ++k) {
         if (PARAMS[k].type == T_TRIGGER) continue;
         if (json_get_str(json, PARAMS[k].key, vb, sizeof(vb)) == 0) {
@@ -1135,7 +1037,6 @@ static void restore_state(GresilInstance *inst, const char *json) {
             snprintf(inst->freeze_id, sizeof(inst->freeze_id), "%s", vb);
         }
     }
-    inst->restoring = 0;
     // A set saved while frozen gets its buffer back from disk. Without a
     // backup to load (saving off, or the synth source) it wakes up unfrozen,
     // like the hardware with autosave disabled.
@@ -1153,22 +1054,8 @@ static void gresil_set_param(void *instance, const char *key, const char *val) {
     GresilInstance *inst = (GresilInstance *)instance;
     if (!inst || !key || !val) return;
 
-    if (strcmp(key, "_level") == 0) {
-        inst->current_page = PAGE_BEADS;
-        for (int i = 0; i < PAGE_COUNT; ++i) {
-            if (strcmp(val, PAGE_NAMES[i]) == 0) inst->current_page = i;
-        }
-        return;
-    }
     if (strcmp(key, "state") == 0) {
         restore_state(inst, val);
-        return;
-    }
-    if (strncmp(key, "knob_", 5) == 0 && strstr(key, "_adjust")) {
-        int knob = atoi(key + 5) - 1;
-        if (knob < 0 || knob >= 8) return;
-        int id = knob_param(inst, knob);
-        if (id >= 0) adjust_value(inst, id, atoi(val));
         return;
     }
     int id = find_param(key);
@@ -1184,15 +1071,6 @@ static int gresil_get_param(void *instance, const char *key, char *buf, int buf_
     if (strcmp(key, "chain_params") == 0) return -1;
     if (strcmp(key, "ui_hierarchy") == 0) return -1;
 
-    if (strncmp(key, "knob_", 5) == 0) {
-        int knob = atoi(key + 5) - 1;
-        if (knob < 0 || knob >= 8) return -1;
-        int id = knob_param(inst, knob);
-        if (id < 0) return -1;
-        if (strstr(key, "_name")) return snprintf(buf, buf_len, "%s", knob_label(inst, id));
-        if (strstr(key, "_value")) return format_display(inst, id, buf, buf_len);
-        return -1;
-    }
     if (strcmp(key, "state") == 0) {
         int n = 0;
         if (buf_len < 2) return -1;
@@ -1238,7 +1116,6 @@ void move_audio_fx_on_midi(void *instance, const uint8_t *msg, int len, int sour
 __attribute__((visibility("default")))
 audio_fx_api_v2_t *move_audio_fx_init_v2(const host_api_v1_t *host) {
     g_host = host;
-    if (host && host->log) host->log("[gresil] Gresil (Beads) v" GRESIL_VERSION " loaded");
     return &g_api;
 }
 

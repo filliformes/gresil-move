@@ -229,6 +229,13 @@ void Processor::Process(
   // processor, so it does not colour the feedback loop either.
   wet_filter_.Process(out, size);
 
+  // Gresil: on the hardware, wow & flutter (and the low-pass inside it) runs
+  // after the dry/wet mix, so it also bends the dry signal. With a clean dry
+  // it shapes the wet signal only; "Dry: Media" keeps the hardware order.
+  if (media_ == MEDIA_DIRTY_TAPE && clean_dry_) {
+    wow_and_flutter_.Process(out, size);
+  }
+
   // Fade-out / Fade-in the dry signal when switching between granular and
   // Delay mode.
   const float wet_fade = SmoothStep(
@@ -250,7 +257,7 @@ void Processor::Process(
   }
   
   // Wow and flutter simulation.
-  if (media_ == MEDIA_DIRTY_TAPE) {
+  if (media_ == MEDIA_DIRTY_TAPE && !clean_dry_) {
     wow_and_flutter_.Process(out, size);
   }
   

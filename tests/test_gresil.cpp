@@ -149,25 +149,30 @@ static void test_media_and_modes() {
 }
 
 static void test_clean_dry_is_transparent() {
-    void *inst = api()->create_instance("", NULL);
-    set(inst, "dry_wet", "0");
-    set(inst, "reverb", "0");
-    Source a, b;
-    int16_t buf[256], ref[256];
-    run(inst, &a, 0.5f);
-    b = a;
-    int max_diff = 0;
-    for (int i = 0; i < 200; ++i) {
-        a.fill(buf, 128);
-        b.fill(ref, 128);
-        api()->process_block(inst, buf, 128);
-        for (int k = 0; k < 256; ++k) {
-            int d = abs(buf[k] - ref[k]);
-            if (d > max_diff) max_diff = d;
+    const char *media[] = { "Dirty Tape", "Clean Tape", "Vintage", "Digital" };
+    for (const char *m : media) {
+        void *inst = api()->create_instance("", NULL);
+        set(inst, "media", m);
+        set(inst, "dry_wet", "0");
+        set(inst, "reverb", "0");
+        Source a, b;
+        int16_t buf[256], ref[256];
+        run(inst, &a, 0.5f);
+        b = a;
+        int max_diff = 0;
+        for (int i = 0; i < 200; ++i) {
+            a.fill(buf, 128);
+            b.fill(ref, 128);
+            api()->process_block(inst, buf, 128);
+            for (int k = 0; k < 256; ++k) {
+                int d = abs(buf[k] - ref[k]);
+                if (d > max_diff) max_diff = d;
+            }
         }
+        CHECK(max_diff <= 2, "%s: Mix 0 with clean dry should pass the input (max diff %d)",
+              m, max_diff);
+        api()->destroy_instance(inst);
     }
-    CHECK(max_diff <= 2, "Mix 0 with clean dry should pass the input (max diff %d)", max_diff);
-    api()->destroy_instance(inst);
 }
 
 static void test_synth_source() {
@@ -179,9 +184,16 @@ static void test_synth_source() {
     run(inst, &src, 1.0f, NULL, NULL, true);
     run(inst, &src, 1.0f, &st, NULL, true);
     CHECK(st.rms() > 0.01, "synth source should play with no input (rms %f)", st.rms());
-    set(inst, "_level", "Beads");
-    CHECK(get(inst, "knob_6_name") == "Bank", "synth: knob 6 should read Bank, got %s",
-          get(inst, "knob_6_name").c_str());
+    // Delay mode belongs to the input engine: the synth keeps its grain size.
+    set(inst, "mode", "Delay");
+    {
+        GresilInstance *g = (GresilInstance *)inst;
+        beads::Parameters p;
+        beads::ModulatedParameter d;
+        beads::Processor::MixParameters m;
+        build_parameters(g, &p, &d, &m);
+        CHECK(p.size.base < 0.98f, "synth source must ignore delay mode (size %.3f)", p.size.base);
+    }
     api()->destroy_instance(inst);
 }
 
@@ -255,9 +267,7 @@ static void test_clock_seed_runs() {
         api()->process_block(inst, buf, 128);
         sample += 128;
     }
-    set(inst, "_level", "Beads");
-    CHECK(get(inst, "knob_4_name") == "Ratio", "clocked delay: knob 4 should read Ratio, got %s",
-          get(inst, "knob_4_name").c_str());
+    CHECK(get(inst, "mode") == "Delay", "clocked delay mode kept");
     api()->destroy_instance(inst);
 }
 
@@ -562,15 +572,16 @@ static void test_output_stage() {
     api()->destroy_instance(inst);
 
     inst = api()->create_instance("", NULL);
-    set(inst, "_level", "Filters");
-    CHECK(get(inst, "knob_1_name") == "HPF", "Filters knob 1 is HPF");
-    CHECK(get(inst, "knob_1_value") == "Off", "HPF default reads Off: %s", get(inst, "knob_1_value").c_str());
-    CHECK(get(inst, "knob_2_value") == "Off", "LPF default reads Off: %s", get(inst, "knob_2_value").c_str());
-    CHECK(get(inst, "knob_3_name") == "Drive", "Filters knob 3 is Drive");
-    set(inst, "knob_1_adjust", "25");
-    CHECK(get(inst, "knob_1_value") == "250 Hz", "HPF display: %s", get(inst, "knob_1_value").c_str());
-    set(inst, "_level", "Setup");
-    CHECK(get(inst, "knob_4_name") == "Limiter", "Setup knob 4 is Limiter");
+    CHECK(get(inst, "filter_hp") == "0.0000", "HPF default is off: %s", get(inst, "filter_hp").c_str());
+    CHECK(get(inst, "filter_lp") == "20000.0000", "LPF default is off: %s", get(inst, "filter_lp").c_str());
+    set(inst, "filter_hp", "250");
+    CHECK(get(inst, "filter_hp") == "250.0000", "HPF set: %s", get(inst, "filter_hp").c_str());
+    set(inst, "filter_lp", "50");  // below range
+    CHECK(get(inst, "filter_lp") == "1000.0000", "LPF clamps to 1 kHz: %s", get(inst, "filter_lp").c_str());
+    set(inst, "limiter_on", "On");
+    CHECK(get(inst, "limiter_on") == "On", "Limiter by name");
+    set(inst, "limiter_on", "0");
+    CHECK(get(inst, "limiter_on") == "Off", "Limiter by index");
     api()->destroy_instance(inst);
 }
 
@@ -704,30 +715,65 @@ static void test_freeze_persistence() {
     api()->destroy_instance(d);
 }
 
-static void test_knob_overlay() {
+// Schwung 1.x drives an audio FX through its param keys only: enum names or
+// indices, raw numbers, and option 1 of a write-only trigger. It never sends
+// _level or knob_N_*, which must be inert.
+static void test_param_keys() {
     void *inst = api()->create_instance("", NULL);
-    set(inst, "_level", "Beads");
-    CHECK(get(inst, "knob_2_value") == "75%", "size display: %s", get(inst, "knob_2_value").c_str());
-    set(inst, "knob_2_adjust", "30");
-    CHECK(get(inst, "mode") == "Granular", "Size at max must no longer switch to delay");
-    set(inst, "_level", "Setup");
-    CHECK(get(inst, "knob_1_name") == "Mode", "setup knob 1 is Mode");
-    set(inst, "knob_1_adjust", "1");
-    CHECK(get(inst, "mode") == "Delay", "mode knob should select Delay");
-    set(inst, "_level", "Beads");
-    CHECK(get(inst, "knob_2_name") == "Filter", "delay mode: Beads knob 2 should read Filter");
-    set(inst, "_level", "Random");
-    CHECK(get(inst, "knob_2_name") == "Filter", "delay mode: Random knob 2 should read Filter");
-    set(inst, "knob_2_adjust", "-30");
-    CHECK(get(inst, "knob_2_value") == "LP 30%", "filter display: %s", get(inst, "knob_2_value").c_str());
+    set(inst, "size", "1");
+    CHECK(get(inst, "mode") == "Granular", "Size at max must not switch to delay");
+    set(inst, "mode", "Delay");
+    CHECK(get(inst, "mode") == "Delay", "mode by name");
+    set(inst, "mode", "0");
+    CHECK(get(inst, "mode") == "Granular", "mode by index");
+    set(inst, "mode", "Delay");
+    set(inst, "filter", "-0.3");
+    CHECK(get(inst, "filter") == "-0.3000", "filter: %s", get(inst, "filter").c_str());
     CHECK(get(inst, "size_rnd") == "0.0000", "the filter must not move Size Rnd");
-    set(inst, "_level", "Setup");
-    set(inst, "knob_8_adjust", "1");  // Trim
+    set(inst, "pitch", "7.6");
+    CHECK(get(inst, "pitch") == "8", "pitch rounds to semitones: %s", get(inst, "pitch").c_str());
+    set(inst, "dry_wet", "3");
+    CHECK(get(inst, "dry_wet") == "1.0000", "values clamp to range");
+
+    // Trigger: the Knob Grid writes option 1 through the enum wire ("On").
+    set(inst, "freeze", "On");
+    set(inst, "trim", "Off");
     Source src;
-    run(inst, &src, 0.1f);
-    CHECK(get(inst, "trim") == "Off", "trim is momentary");
+    run(inst, &src, 0.05f);
+    CHECK(get(inst, "freeze") == "On", "writing the idle option must not fire Trim");
+    set(inst, "trim", "On");
+    run(inst, &src, 0.05f);
+    CHECK(get(inst, "freeze") == "Off", "Trim fires on option 1 and unfreezes");
+    CHECK(get(inst, "trim") == "Off", "trim reads back idle");
+
+    // Removed overlay keys are inert.
+    std::string before = get(inst, "state");
+    set(inst, "_level", "Setup");
+    set(inst, "knob_1_adjust", "5");
+    CHECK(get(inst, "state") == before, "knob_N_adjust / _level must not change anything");
+    CHECK(get(inst, "knob_1_name") == "<none>", "knob_N_name is not served");
     CHECK(get(inst, "nonexistent") == "<none>", "unknown keys return -1");
     CHECK(get(inst, "chain_params") == "<none>", "chain_params falls back to module.json");
+    CHECK(get(inst, "ui_hierarchy") == "<none>", "ui_hierarchy falls back to module.json");
+    api()->destroy_instance(inst);
+}
+
+// A media change must not clear the delay banks while a freeze restore is
+// writing into them: it waits for the load to finish.
+static void test_no_reconfigure_during_load() {
+    void *inst = api()->create_instance("", NULL);
+    GresilInstance *g = (GresilInstance *)inst;
+    Source src;
+    run(inst, &src, 0.2f);
+    const int media_before = g->applied_media;
+    g->loading = 1;
+    g->store.load_done.store(0);
+    set(inst, "media", "Dirty Tape");
+    run(inst, &src, 0.2f);
+    CHECK(g->applied_media == media_before, "media must not change during a load");
+    g->store.load_done.store(-1);  // load finished (no file)
+    run(inst, &src, 0.2f);
+    CHECK(g->applied_media == 0, "media change applies after the load (got %d)", g->applied_media);
     api()->destroy_instance(inst);
 }
 
@@ -763,7 +809,8 @@ int main() {
     test_clock_seed_runs();
     test_state_roundtrip();
     test_freeze_persistence();
-    test_knob_overlay();
+    test_param_keys();
+    test_no_reconfigure_during_load();
     test_media_switch_while_running();
     printf("%d checks, %d failures\n", g_checks, g_failures);
     return g_failures ? 1 : 0;

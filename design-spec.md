@@ -104,6 +104,11 @@ smoother per sub-block (~4 ms).
   clicked when applied per block in 0.5 dB steps.
 - **Media / Buffer / Source changes**: 10 ms fade out, reconfigure in a block
   of its own (output silent), 10 ms fade in.
+- **Dirty Tape dry (review, 2026-10-14)**: wow & flutter (and its LP) ran
+  after the dry/wet mix and the input was always soft-clipped, so "Dry:
+  Clean" was not clean on Dirty Tape. With a clean dry, wow & flutter now
+  shapes the wet only ("Dry: Media" keeps the hardware order), and the
+  soft clip follows Drive. `test_clean_dry_is_transparent` covers all media.
 - **Denormals**: FPCR.FZ is set for the duration of `process_block`.
   `-ffast-math` only enables flush-to-zero for executables, not for a `.so`.
 - **Explicit Mode + Filter**: on the hardware, Size at max enters delay mode
@@ -158,7 +163,7 @@ smoother per sub-block (~4 ms).
 |---|---|---|---|---|
 | filter_hp | HPF | 0–1000 Hz | 0 (Off) | One-pole 6 dB/oct, **wet only**: applied in `Processor` / `Synth` before the dry/wet mix (and outside the feedback loop) |
 | filter_lp | LPF | 1000–20000 Hz | 20000 (Off) | Same, low-pass, wet only |
-| drive | Drive | 0–24 dB | 0 | Moved here from Setup (input gain, per-media soft clip) |
+| drive | Drive | 0–24 dB | 0 | Input gain (dry included). Moved here from Setup. Tape soft clip ramps in with it: Dirty Tape fully from +3 dB, Clean Tape up to +12 dB; at 0 dB nothing clips, so the clean dry is untouched on every media |
 | limiter_pre | Pre Gain | −6..+6 dB | 0 | Into the tape limiter |
 | limiter_post | Post Gain | −6..+6 dB | 0 | Out of the tape limiter |
 | low_boost | Low Boost | 0–6 dB | 0 | Low-shelf biquad on the whole output, as in Verglas |
@@ -184,9 +189,12 @@ follow the per-sub-block smoothed values.
 | freeze_save | Frz Save | Off/On | On | Save a frozen buffer with the set |
 | trim | Trim | trigger | — | Hardware Media+Freeze: restart the buffer from now and unfreeze |
 
-Dynamic knob labels (overlay): Slice / Envelope / Delay Time or Ratio / Filter
-in delay mode; Wave / Bank / Osc/Grain with the synth source. Size shows
-"DELAY", Density shows "Reg n% / Off / Rnd n%".
+Knob labels and units come from `module.json` only. Schwung 1.x reads and
+writes params by key and never sends `_level` / `knob_N_*` to an audio FX
+(those are slot-level keys of the chain host), so the wrapper has no
+knob-overlay layer: no context labels like Slice / Wave / Bank, no custom
+readouts. Context changes that matter are expressed with `visible_if`
+(the Size / Filter swap).
 
 ---
 
@@ -258,8 +266,6 @@ synth has no buffer).
 - [ ] On-device CPU profile per media and per mode (32 grains + Hermite reads)
 - [ ] Confirm Start/Stop/ticks reach the audio FX `on_midi` on the target host
       without "MIDI Clock Out", and what `get_beat_position` returns
-- [ ] Is the Knob Grid happy with the dynamic `knob_N_name` labels, or should
-      delay mode use `visible_if` pages instead?
 - [ ] Freeze file cleanup (delete on unfreeze? age-based sweep?)
 - [ ] Is 2 s the right freeze-save delay (hardware: 10 s)?
 - [ ] Vintage media: is a 14.5 kHz LP close enough to the 32 kHz codec, or is a
