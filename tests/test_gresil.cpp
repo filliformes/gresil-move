@@ -63,6 +63,20 @@ static void set(void *inst, const char *key, const char *val) {
     api()->set_param(inst, key, val);
 }
 
+// Most checks measure the engine itself, so they start from neutral settings:
+// Digital media and the output limiter off (the shipping defaults are Clean
+// Tape and Limiter on, covered by test_shipping_defaults).
+static void *make_instance() {
+    void *inst = api()->create_instance("", NULL);
+    set(inst, "media", "Digital");
+    set(inst, "limiter_on", "Off");
+    GresilInstance *g = (GresilInstance *)inst;
+    g->limiter_mix = 0.0f;
+    // Apply the media change now, as a fresh Digital instance would have it.
+    apply_configuration(g);
+    return inst;
+}
+
 // Stereo test signal: two detuned sines with a slow amplitude wobble.
 struct Source {
     double t = 0;
@@ -115,7 +129,7 @@ static void test_media_and_modes() {
     for (int m = 0; m < 4; ++m) {
         for (int b = 0; b < 2; ++b) {
             for (int delay = 0; delay < 2; ++delay) {
-                void *inst = api()->create_instance("", NULL);
+                void *inst = make_instance();
                 set(inst, "media", media[m]);
                 set(inst, "buffer", buffers[b]);
                 set(inst, "dry_wet", "1");
@@ -151,7 +165,7 @@ static void test_media_and_modes() {
 static void test_clean_dry_is_transparent() {
     const char *media[] = { "Dirty Tape", "Clean Tape", "Vintage", "Digital" };
     for (const char *m : media) {
-        void *inst = api()->create_instance("", NULL);
+        void *inst = make_instance();
         set(inst, "media", m);
         set(inst, "dry_wet", "0");
         set(inst, "reverb", "0");
@@ -176,7 +190,7 @@ static void test_clean_dry_is_transparent() {
 }
 
 static void test_synth_source() {
-    void *inst = api()->create_instance("", NULL);
+    void *inst = make_instance();
     set(inst, "source", "Synth");
     set(inst, "dry_wet", "0.5");
     Source src;
@@ -234,7 +248,7 @@ static void test_clock_pll() {
 }
 
 static void test_clock_seed_runs() {
-    void *inst = api()->create_instance("", NULL);
+    void *inst = make_instance();
     set(inst, "seed", "Clock");
     set(inst, "density", "0.2");
     set(inst, "dry_wet", "1");
@@ -274,7 +288,7 @@ static void test_clock_seed_runs() {
 // The user-facing complaint: grains were scarce. Count overlapping grains at
 // the default settings on a continuous input.
 static void test_default_grain_density() {
-    void *inst = api()->create_instance("", NULL);
+    void *inst = make_instance();
     GresilInstance *g = (GresilInstance *)inst;
     Source src;
     int16_t buf[256];
@@ -298,7 +312,7 @@ static void test_default_grain_density() {
 struct Spread { double min_delay = 1e30, max_delay = -1e30; double min_speed = 1e30, max_speed = -1e30; int grains = 0; };
 
 static Spread measure_spread(const char *time_rnd, const char *pitch_rnd) {
-    void *inst = api()->create_instance("", NULL);
+    void *inst = make_instance();
     GresilInstance *g = (GresilInstance *)inst;
     set(inst, "time_rnd", time_rnd);
     set(inst, "pitch_rnd", pitch_rnd);
@@ -403,7 +417,7 @@ static void source_synth(void *inst) { set(inst, "source", "Synth"); }
 static void test_switches_keep_the_dry() {
     const char *mixes[] = { "0", "0.5" };
     for (const char *mx : mixes) {
-        void *inst = api()->create_instance("", NULL);
+        void *inst = make_instance();
         set(inst, "dry_wet", mx);
         set(inst, "reverb", "0");
         Source warm;
@@ -417,7 +431,7 @@ static void test_switches_keep_the_dry() {
               "Mix %s: media switch dips to %.0f%% / %.0f%% (no hole allowed)", mx, dip * 100, dip2 * 100);
         api()->destroy_instance(inst);
     }
-    void *inst = api()->create_instance("", NULL);
+    void *inst = make_instance();
     set(inst, "dry_wet", "0");
     Source warm;
     run(inst, &warm, 0.5f);
@@ -431,7 +445,7 @@ static void test_switches_keep_the_dry() {
 
 static void test_click_free_controls() {
     // Mix 0: the output is the (driven) input, a 220 Hz sine at -26 dBFS.
-    void *inst = api()->create_instance("", NULL);
+    void *inst = make_instance();
     set(inst, "dry_wet", "0");
     Source src;
     max_step(inst, &src, 50, NULL, 0);
@@ -441,7 +455,7 @@ static void test_click_free_controls() {
     CHECK(worst < 1000, "Drive jump should be smoothed (max step %d)", worst);
     api()->destroy_instance(inst);
 
-    inst = api()->create_instance("", NULL);
+    inst = make_instance();
     set(inst, "dry_wet", "0");
     max_step(inst, &src, 50, NULL, 0);
     worst = max_step(inst, &src, 200, media_dirty, 100);
@@ -453,7 +467,7 @@ static void test_click_free_controls() {
 // After a media change the buffer is empty: grains must come back as soon as
 // audio is recorded, not after the whole (17-35 s) buffer has filled.
 static void test_audible_after_media_change() {
-    void *inst = api()->create_instance("", NULL);
+    void *inst = make_instance();
     set(inst, "media", "Dirty Tape");
     set(inst, "buffer", "Mono");
     set(inst, "time", "0.5");
@@ -472,7 +486,7 @@ struct Tilt { double lo = 0, hi = 0; double lp = 0, hp = 0;
     void add(double x) { lp += 0.028 * (x - lp); double h = x - hp; hp += 0.25 * (x - hp); lo += lp * lp; hi += h * h; } };
 
 static double measure_tilt(void (*setup)(void *)) {
-    void *inst = api()->create_instance("", NULL);
+    void *inst = make_instance();
     set(inst, "dry_wet", "1");
     setup(inst);
     int16_t buf[256];
@@ -516,20 +530,20 @@ static void test_mode_and_filter() {
 // Sets saved before Mode existed: Size at max meant delay mode, and the Size
 // attenuverter was the filter.
 static void test_mode_migration() {
-    void *inst = api()->create_instance("", NULL);
+    void *inst = make_instance();
     set(inst, "state", "{\"size\": \"1.0000\", \"size_rnd\": \"1.0000\", \"density\": \"0.5000\"}");
     CHECK(get(inst, "mode") == "Delay", "old Size-at-max state should restore as Delay");
     CHECK(get(inst, "filter") == "1.0000", "old Size Rnd should become the filter: %s", get(inst, "filter").c_str());
     CHECK(get(inst, "size_rnd") == "0.0000", "Size Rnd should be cleared after migration");
     api()->destroy_instance(inst);
 
-    inst = api()->create_instance("", NULL);
+    inst = make_instance();
     set(inst, "state", "{\"size\": \"0.6000\", \"size_rnd\": \"0.5000\"}");
     CHECK(get(inst, "mode") == "Granular", "old granular state stays Granular");
     CHECK(get(inst, "size_rnd") == "0.5000", "granular Size Rnd kept");
     api()->destroy_instance(inst);
 
-    inst = api()->create_instance("", NULL);
+    inst = make_instance();
     set(inst, "state", "{\"size\": \"1.0000\", \"mode\": \"Granular\"}");
     CHECK(get(inst, "mode") == "Granular", "an explicit mode wins over Size");
     api()->destroy_instance(inst);
@@ -543,7 +557,7 @@ static void setup_nothing(void *inst) { (void)inst; }
 
 static void test_wet_filters() {
     // Dry untouched: Mix 0, both filters hard on, compare with the input.
-    void *inst = api()->create_instance("", NULL);
+    void *inst = make_instance();
     set(inst, "dry_wet", "0");
     set(inst, "reverb", "0");
     set(inst, "filter_hp", "1000");
@@ -601,7 +615,7 @@ static void shelf_jump(void *inst) { set(inst, "low_boost", "6"); }
 
 static void test_output_stage() {
     Source src;
-    void *inst = api()->create_instance("", NULL);
+    void *inst = make_instance();
     set(inst, "dry_wet", "0");
     max_step(inst, &src, 50, NULL, 0);
     int worst = max_step(inst, &src, 200, limiter_on, 100);
@@ -609,7 +623,7 @@ static void test_output_stage() {
     CHECK(worst < 200, "Limiter engage should crossfade (max step %d)", worst);
     api()->destroy_instance(inst);
 
-    inst = api()->create_instance("", NULL);
+    inst = make_instance();
     set(inst, "dry_wet", "0");
     max_step(inst, &src, 50, NULL, 0);
     worst = max_step(inst, &src, 200, shelf_jump, 100);
@@ -618,7 +632,7 @@ static void test_output_stage() {
     api()->destroy_instance(inst);
 
     // Low shelf acts on the whole output (dry included), as in Verglas.
-    inst = api()->create_instance("", NULL);
+    inst = make_instance();
     set(inst, "dry_wet", "0");
     set(inst, "low_boost", "6");
     set(inst, "low_freq", "400");
@@ -631,7 +645,7 @@ static void test_output_stage() {
     CHECK(st.rms() > 0.42, "Low Boost should lift the output lows (rms %f)", st.rms());
     api()->destroy_instance(inst);
 
-    inst = api()->create_instance("", NULL);
+    inst = make_instance();
     CHECK(get(inst, "filter_hp") == "0.0000", "HPF default is off: %s", get(inst, "filter_hp").c_str());
     CHECK(get(inst, "filter_lp") == "20000.0000", "LPF default is off: %s", get(inst, "filter_lp").c_str());
     set(inst, "filter_hp", "250");
@@ -642,6 +656,32 @@ static void test_output_stage() {
     CHECK(get(inst, "limiter_on") == "On", "Limiter by name");
     set(inst, "limiter_on", "0");
     CHECK(get(inst, "limiter_on") == "Off", "Limiter by index");
+    api()->destroy_instance(inst);
+}
+
+static void test_shipping_defaults() {
+    void *inst = api()->create_instance("", NULL);
+    GresilInstance *g = (GresilInstance *)inst;
+    CHECK(get(inst, "media") == "Clean Tape", "default media: %s", get(inst, "media").c_str());
+    CHECK(get(inst, "limiter_on") == "On", "default limiter: %s", get(inst, "limiter_on").c_str());
+    Source src;
+    int16_t buf[256];
+    long active = 0, n = 0;
+    Stats st;
+    for (int b = 0; b < 1500; ++b) {
+        src.fill(buf, 128, 0.9f);
+        api()->process_block(inst, buf, 128);
+        if (b > 300) {
+            active += g->processor.processor_clean_tape_.granular_player_.CountActiveGrains();
+            ++n;
+            st.add(buf, 128);
+        }
+    }
+    double avg = (double)active / n;
+    printf("  shipping defaults (Clean Tape, Limiter on): %.2f grains overlapping, peak %d\n",
+           avg, st.peak);
+    CHECK(avg > 2.0, "defaults should give a continuous texture (avg %.2f grains)", avg);
+    CHECK(st.peak < 32767, "limiter on by default keeps a hot input off the rails (peak %d)", st.peak);
     api()->destroy_instance(inst);
 }
 
@@ -656,7 +696,7 @@ static std::string prettify(const std::string &json) {
 }
 
 static void test_state_roundtrip() {
-    void *a = api()->create_instance("", NULL);
+    void *a = make_instance();
     set(a, "time", "0.13");
     set(a, "size", "0.77");
     set(a, "pitch", "-7");
@@ -680,7 +720,7 @@ static void test_state_roundtrip() {
     std::string state = get(a, "state");
     CHECK(state.size() > 10 && state[0] == '{', "state should be JSON: %s", state.c_str());
 
-    void *b = api()->create_instance("", NULL);
+    void *b = make_instance();
     set(b, "state", prettify(state).c_str());
     for (int k = 0; k < P_COUNT; ++k) {
         if (PARAMS[k].type == T_TRIGGER) continue;
@@ -714,7 +754,7 @@ static bool file_exists(void *path) {
 
 static void test_freeze_persistence() {
     setenv("GRESIL_DATA_DIR", "build/test_data", 1);
-    void *a = api()->create_instance("", NULL);
+    void *a = make_instance();
     GresilInstance *ia = (GresilInstance *)a;
     unlink(ia->store.path);
     set(a, "media", "Vintage");
@@ -726,7 +766,7 @@ static void test_freeze_persistence() {
     CHECK(saved, "frozen buffer should be saved to %s", ia->store.path);
     std::string state = get(a, "state");
 
-    void *b = api()->create_instance("", NULL);
+    void *b = make_instance();
     GresilInstance *ib = (GresilInstance *)b;
     set(b, "state", prettify(state).c_str());
     int16_t buf[256];
@@ -747,7 +787,7 @@ static void test_freeze_persistence() {
           "restored write pointer should match");
 
     // Unfreezing before the save delay must not write a file.
-    void *c = api()->create_instance("", NULL);
+    void *c = make_instance();
     GresilInstance *ic = (GresilInstance *)c;
     unlink(ic->store.path);
     set(c, "freeze", "On");
@@ -759,7 +799,7 @@ static void test_freeze_persistence() {
     CHECK(!file_exists(ic->store.path), "short freeze should not be saved");
 
     // A missing backup wakes up unfrozen.
-    void *d = api()->create_instance("", NULL);
+    void *d = make_instance();
     GresilInstance *id = (GresilInstance *)d;
     set(d, "state", "{\"freeze\": \"On\", \"freeze_id\": \"deadbeef00000000\"}");
     for (int i = 0; i < 300 && (id->pending_load || id->loading); ++i) {
@@ -779,7 +819,7 @@ static void test_freeze_persistence() {
 // indices, raw numbers, and option 1 of a write-only trigger. It never sends
 // _level or knob_N_*, which must be inert.
 static void test_param_keys() {
-    void *inst = api()->create_instance("", NULL);
+    void *inst = make_instance();
     set(inst, "size", "1");
     CHECK(get(inst, "mode") == "Granular", "Size at max must not switch to delay");
     set(inst, "mode", "Delay");
@@ -821,7 +861,7 @@ static void test_param_keys() {
 // A media change must not clear the delay banks while a freeze restore is
 // writing into them: it waits for the load to finish.
 static void test_no_reconfigure_during_load() {
-    void *inst = api()->create_instance("", NULL);
+    void *inst = make_instance();
     GresilInstance *g = (GresilInstance *)inst;
     Source src;
     run(inst, &src, 0.2f);
@@ -838,7 +878,7 @@ static void test_no_reconfigure_during_load() {
 }
 
 static void test_media_switch_while_running() {
-    void *inst = api()->create_instance("", NULL);
+    void *inst = make_instance();
     Source src;
     Stats st;
     const char *media[] = { "Dirty Tape", "Digital", "Clean Tape", "Vintage" };
@@ -856,6 +896,7 @@ int main() {
     printf("Gresil native tests\n");
     test_media_and_modes();
     test_default_grain_density();
+    test_shipping_defaults();
     test_random_knobs();
     test_click_free_controls();
     test_switches_keep_the_dry();

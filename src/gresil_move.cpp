@@ -164,7 +164,7 @@ static const ParamDef PARAMS[P_COUNT] = {
     { "shape_rnd",   "Shape Rnd", T_FLOAT, -1,  1,  0.01f, 0,     NULL, 0 },
     { "pitch_rnd",   "Pitch Rnd", T_FLOAT, -1,  1,  0.01f, 0,     NULL, 0 },
     ENUM_DEF("freeze",      "Freeze",     OPT_OFF_ON,    0),
-    ENUM_DEF("media",       "Media",      OPT_MEDIA,     3),
+    ENUM_DEF("media",       "Media",      OPT_MEDIA,     1),  // Clean Tape
     ENUM_DEF("seed",        "Seed",       OPT_SEED,      0),
     ENUM_DEF("clock_div",   "Clock Div",  OPT_CLOCK_DIV, 4),
     ENUM_DEF("source",      "Source",     OPT_SOURCE,    0),
@@ -182,7 +182,7 @@ static const ParamDef PARAMS[P_COUNT] = {
     // limiter act on the final output, as in Verglas.
     { "filter_hp",   "HPF",       T_FLOAT, 0,   1000,  10,   0,     NULL, 0 },
     { "filter_lp",   "LPF",       T_FLOAT, 1000, 20000, 10,  20000, NULL, 0 },
-    ENUM_DEF("limiter_on",  "Limiter",    OPT_OFF_ON,    0),
+    ENUM_DEF("limiter_on",  "Limiter",    OPT_OFF_ON,    1),
     { "limiter_pre", "Pre Gain",  T_FLOAT, -6,  6,  0.5f,  0,     NULL, 0 },
     { "limiter_post","Post Gain", T_FLOAT, -6,  6,  0.5f,  0,     NULL, 0 },
     { "low_boost",   "Low Boost", T_FLOAT, 0,   6,  0.5f,  0,     NULL, 0 },
@@ -924,7 +924,7 @@ static void *gresil_create(const char *module_dir, const char *config_json) {
     update_low_shelf(inst, PARAMS[P_LOW_BOOST].def, PARAMS[P_LOW_FREQ].def, PARAMS[P_LOW_Q].def);
     inst->limiter_pre_gain = 1.0f;
     inst->limiter_post_gain = 1.0f;
-    inst->limiter_mix = 0.0f;
+    inst->limiter_mix = (float)ival(inst, P_LIMITER_ON);  // start settled, no fade-in
     inst->previous_seed = stmlib::GATE_FLAG_LOW;
     clock_init(&inst->clock);
     apply_configuration(inst);

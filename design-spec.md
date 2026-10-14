@@ -153,7 +153,7 @@ smoother per sub-block (~4 ms).
 |---|---|---|---|---|
 | time_rnd / size_rnd / shape_rnd / pitch_rnd | … Rnd | −1..+1 | 0 | The four attenuverters with nothing patched. Beads' pot law: dead zone at noon, quadratic. +: uniform per-grain spread (random walk in delay mode); −: occasional random jumps. **Delay mode: the Size Rnd knob is Filter** |
 | freeze | Freeze | Off/On | Off | Stops recording; grains play the frozen buffer |
-| media | Media | Dirty Tape / Clean Tape / Vintage / Digital | Digital | Changing it clears the buffer (as on the hardware) |
+| media | Media | Dirty Tape / Clean Tape / Vintage / Digital | Clean Tape | Changing it clears the buffer (as on the hardware) |
 | seed | Seed | Free / Clock | Free | Clock: MIDI clock drives the SEED input with the button locked |
 | clock_div | Clock Div | 1/32 … 1 Bar | 1/8 | Gate rate fed to SEED. In delay mode the delay time is a ratio of this interval |
 
@@ -183,7 +183,7 @@ follow the per-sub-block smoothed values.
 | filter | Filter | −1..+1 | 0 | Delay mode only (replaces Size on the Beads page and Size Rnd on the Random page): − low-pass, + high-pass, both resonant, Beads' attenuverter law. Hardware: the Size attenuverter in delay mode |
 | source | Source | Input / Synth | Input | Synth: Beads' wavetable voice. Time scans the wave, Feedback picks the bank |
 | buffer | Buffer | Stereo / Mono | Stereo | Mono sums L+R and doubles the recording time (hardware: auto-detected from patching) |
-| limiter_on | Limiter | Off/On | Off | Verglas tape limiter (Chowdhury cubic + Airwindows IronOxide) on the final output; gains on the Filters page |
+| limiter_on | Limiter | Off/On | On | Verglas tape limiter (Chowdhury cubic + Airwindows IronOxide) on the final output; gains on the Filters page |
 | dry | Dry | Clean / Media | Clean | Media: hardware dry path (degraded, −2.5 dB) |
 | mono_grains | Mono Grain | Off/On | Off | Beads' hidden monophonic mode (each grain cuts the previous) |
 | freeze_save | Frz Save | Off/On | On | Save a frozen buffer with the set |
