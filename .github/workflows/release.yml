@@ -52,6 +52,21 @@ jobs:
         run: |
           TAG="${GITHUB_REF#refs/tags/v}"
           URL="https://github.com/${{ github.repository }}/releases/download/v${TAG}/gresil-module.tar.gz"
+
+          # Commit on top of the CURRENT main, not on the tag: if main moved
+          # past the tag while this ran, a commit based on the tag would be
+          # rejected as a non-fast-forward and release.json would never update.
+          git fetch origin main
+          git checkout -f -B main origin/main
+
+          # Never move release.json backwards (e.g. re-running an older tag).
+          CURRENT=$(grep -o '"version": *"[^"]*"' release.json 2>/dev/null | grep -o '[0-9][0-9.]*' || echo "0")
+          NEWEST=$(printf '%s\n%s\n' "$CURRENT" "$TAG" | sort -V | tail -1)
+          if [ "$NEWEST" != "$TAG" ]; then
+            echo "release.json already at $CURRENT (newer than $TAG), leaving it"
+            exit 0
+          fi
+
           echo "{" > release.json
           echo "  \"version\": \"${TAG}\"," >> release.json
           echo "  \"download_url\": \"${URL}\"" >> release.json
@@ -60,5 +75,9 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add release.json
+          if git diff --cached --quiet; then
+            echo "release.json already up to date"
+            exit 0
+          fi
           git commit -m "ci: update release.json for v${TAG}"
-          git push origin HEAD:main
+          git push origin main

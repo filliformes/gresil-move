@@ -2,7 +2,7 @@
     "id": "gresil",
     "name": "Gresil",
     "abbrev": "GRSL",
-    "version": "0.1.1",
+    "version": "0.1.2",
     "description": "Mutable Instruments Beads granular texture synthesizer - granular, delay and wavetable modes for Ableton Move",
     "author": "Emilie Gillet (DSP) / filliformes (port)",
     "license": "MIT",
